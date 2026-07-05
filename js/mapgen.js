@@ -53,8 +53,11 @@ const MapGen = (() => {
           v = fbm(x * 0.010, y * 0.010, seed) + 0.10 - 0.14 * (dx * dx + dy * dy);
         } else if (template === 'duo') {
           // İki Kıta: sol ve sağda iki merkez, ortada deniz şeridi
-          const dA = Math.hypot((nx - 0.27) * 2.6, (ny - 0.5) * 2.0);
-          const dB = Math.hypot((nx - 0.73) * 2.6, (ny - 0.5) * 2.0);
+          // Math.sqrt IEEE'de kesin yuvarlanır (deterministik); Math.hypot değildir
+          const ax = (nx - 0.27) * 2.6, ay = (ny - 0.5) * 2.0;
+          const bx = (nx - 0.73) * 2.6, by = (ny - 0.5) * 2.0;
+          const dA = Math.sqrt(ax * ax + ay * ay);
+          const dB = Math.sqrt(bx * bx + by * by);
           const d = Math.min(dA, dB);
           v = fbm(x * 0.008, y * 0.008, seed) + 0.26 - 0.55 * d * d;
           if (Math.abs(nx - 0.5) < 0.045) v -= 0.3; // orta boğaz hep deniz

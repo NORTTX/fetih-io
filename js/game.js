@@ -9,7 +9,20 @@ const Game = {
   humanId: 1,
   spawnableCount: 0, landCount: 0,
 
-  init(map) {
+  // Deterministik RNG (mulberry32): online modda tüm istemciler aynı tohumla
+  // birebir aynı simülasyonu üretir — Math.random oyun mantığında YASAK
+  setSeed(seed) {
+    this._rngState = seed >>> 0;
+  },
+  rng() {
+    let t = (this._rngState += 0x6D2B79F5);
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  },
+
+  init(map, seed) {
+    this.setSeed(seed === undefined ? (Date.now() & 0xffffffff) : seed);
     this.W = CFG.MAP_W; this.H = CFG.MAP_H;
     this.terrain = map.terrain;
     this.spawnable = map.spawnable;
@@ -120,7 +133,7 @@ const Game = {
       border: new Set(),
       attacks: new Map(),   // anahtar -> saldırı (kara: hedef id, deniz: özel anahtar)
       alive: true,
-      aggr: 0.8 + Math.random() * 0.8,
+      aggr: 0.8 + this.rng() * 0.8,
     };
     this.players.push(p);
     return p;
@@ -253,14 +266,14 @@ const Game = {
         const tries = Math.min(12, L);
         let bestD = Infinity; k = 0;
         for (let t = 0; t < tries; t++) {
-          const c = (Math.random() * L) | 0;
+          const c = (this.rng() * L) | 0;
           const pi = att.frontier[c];
           const x = pi % W, y = (pi / W) | 0;
           const d = (x - dx0) * (x - dx0) + (y - dy0) * (y - dy0);
           if (d < bestD) { bestD = d; k = c; }
         }
       } else {
-        k = (Math.random() * att.frontier.length) | 0;
+        k = (this.rng() * att.frontier.length) | 0;
       }
       const pi = att.frontier[k];
       att.frontier[k] = att.frontier[att.frontier.length - 1];
@@ -344,8 +357,10 @@ const Game = {
     const route = this.findSeaRoute(fromId, coast);
     if (!route) return 'noroute';
     p.balance -= amount;
-    // limanlar gemi vergisini ve yolda erimeyi azaltır
-    const disc = Math.max(CFG.PORT_DISCOUNT_MIN, Math.pow(CFG.PORT_DISCOUNT, p.bCount.port));
+    // limanlar gemi vergisini ve yolda erimeyi azaltır (deterministik artımlı çarpım)
+    let disc = 1;
+    for (let k = 0; k < p.bCount.port; k++) disc *= CFG.PORT_DISCOUNT;
+    disc = Math.max(CFG.PORT_DISCOUNT_MIN, disc);
     const eff = amount * (1 - CFG.BOAT_TAX * disc);
     this.boats.push({
       id: this._boatSeq++,
@@ -554,7 +569,8 @@ const Game = {
     // Döngü sonu: gelir dağıtımı
     if (this.tick % CFG.TICKS_PER_CYCLE === 0) {
       this.cycle++;
-      this.rate = Math.max(CFG.INTEREST_MIN, CFG.INTEREST_START * Math.pow(CFG.INTEREST_DECAY, this.cycle));
+      // artımlı çarpım: Math.pow tarayıcılar arası birebir aynı sonucu garanti etmez
+      this.rate = Math.max(CFG.INTEREST_MIN, this.rate * CFG.INTEREST_DECAY);
       for (let id = 1; id < this.players.length; id++) {
         const p = this.players[id];
         if (!p.alive || p.pixels === 0) continue;
@@ -574,5 +590,51 @@ const Game = {
     t.alive = false;
     t.balance = 0;
     t.attacks.clear();
+  },
+
+  // ---- Komut yürütücü ----
+  // Hem solo hem online tüm oyuncu eylemleri buradan geçer; online modda
+  // aynı komut aynı tickte tüm istemcilerde çalışır → simülasyon özdeş kalır
+  execCommand(pid, cmd) {
+    const p = this.players[pid];
+    if (!p) return;
+    if (cmd.type !== 'spawn' && p.pixels === 0) return;
+    switch (cmd.type) {
+      case 'spawn':
+        if (p.pixels === 0) this.spawn(p, cmd.x, cmd.y);
+        break;
+      case 'attack':
+        this.launchAttack(pid, cmd.target, p.balance * cmd.pct / 100, cmd.dir);
+        break;
+      case 'boat':
+        this.launchBoat(pid, cmd.cell, p.balance * cmd.pct / 100);
+        break;
+      case 'cancel': this.cancelAttack(pid, cmd.key); break;
+      case 'recall': this.recallBoat(pid, cmd.boatId); break;
+      case 'sink': this.attackBoat(pid, cmd.boatId, p.balance * cmd.pct / 100); break;
+      case 'build': this.build(pid, cmd.cell, cmd.kind); break;
+      case 'betray':
+        if (this.breakPact(pid, cmd.target)) {
+          this.launchAttack(pid, cmd.target, p.balance * cmd.pct / 100, cmd.dir);
+        }
+        break;
+      case 'peace': {
+        const t = this.players[cmd.target];
+        if (!t || t.pixels === 0 || this.hasPact(pid, cmd.target) || this.isTraitor(pid)) break;
+        if (t.isBot) {
+          // bot kararı deterministik: tüm istemciler aynı sonucu üretir
+          const accept = t.balance < p.balance * 0.9 ? this.rng() < 0.75 : this.rng() < 0.3 / t.aggr;
+          if (accept) this.makePact(pid, cmd.target);
+          if (this.onPeaceResult) this.onPeaceResult(pid, cmd.target, accept);
+        } else {
+          if (this.onHumanPeaceOffer) this.onHumanPeaceOffer(pid, cmd.target);
+        }
+        break;
+      }
+      case 'acceptPact':
+        if (!this.isTraitor(cmd.target)) this.makePact(pid, cmd.target);
+        if (this.onPeaceResult) this.onPeaceResult(cmd.target, pid, true);
+        break;
+    }
   },
 };

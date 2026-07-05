@@ -88,8 +88,38 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: #0b1018; f
   display: flex; gap: 8px; padding: 8px 10px;
 }
 
-#settings {
+#online {
   top: 128px; left: 50%; transform: translateX(-50%);
+  display: flex; flex-direction: column; gap: 8px; padding: 10px 14px; font-size: 13px;
+}
+#name-input, #code-input, #lobby-link {
+  background: #16202e; color: #e8edf2; border: 1px solid rgba(255,255,255,.18);
+  border-radius: 5px; padding: 5px 8px; font-size: 13px;
+}
+#name-input { width: 150px; }
+#code-input { width: 64px; text-transform: uppercase; text-align: center; letter-spacing: 2px; }
+#lobby-link { flex: 1; min-width: 240px; font-size: 11px; }
+.netbtn {
+  background: #2f5c33; color: #c9f0cc; border: 1px solid rgba(255,255,255,.18);
+  border-radius: 5px; padding: 6px 12px; cursor: pointer; font-size: 13px;
+}
+.netbtn:hover { background: #3d7a43; }
+.netbtn:disabled { opacity: .5; }
+
+#lobbypanel {
+  top: 70px; left: 50%; transform: translateX(-50%);
+  display: flex; flex-direction: column; gap: 8px; padding: 14px 18px;
+  min-width: 340px; font-size: 13px;
+}
+#lobbypanel h2 { font-size: 17px; }
+#lobby-code { color: #ffd94d; letter-spacing: 3px; }
+.lobbyhint { color: #93a3b5; font-size: 12px; }
+.lobbyrow { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+#lobby-count { color: #ffd94d; font-size: 15px; }
+#lobby-players { display: flex; flex-direction: column; gap: 2px; }
+
+#settings {
+  top: 214px; left: 50%; transform: translateX(-50%);
   display: flex; flex-direction: column; gap: 8px; padding: 10px 14px;
   font-size: 13px;
 }

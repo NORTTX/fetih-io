@@ -1,4 +1,4 @@
-// Ana döngü, girişler ve arayüz
+// Ana döngü, girişler, arayüz ve çevrimiçi oda akışı
 (() => {
   const BOT_NAMES = [
     'Roma', 'Osmanlı', 'Pers', 'Kartaca', 'Vikingler', 'Moğollar', 'Prusya',
@@ -6,37 +6,78 @@
     'Galya', 'Keltler', 'Frigya', 'Lidya', 'Nubya', 'Fenike', 'Makedonya',
     'Hunlar', 'Bizans', 'Songhay', 'Maya', 'Kuşan', 'Elam', 'Urartu', 'Timurlular',
   ];
+  const HUMAN_COLORS = [
+    { r: 240, g: 200, b: 60 }, { r: 220, g: 70, b: 60 }, { r: 70, g: 130, b: 235 },
+    { r: 80, g: 200, b: 100 }, { r: 190, g: 90, b: 220 }, { r: 245, g: 140, b: 40 },
+    { r: 60, g: 200, b: 210 }, { r: 235, g: 110, b: 170 },
+  ];
 
   const canvas = document.getElementById('canvas');
   const $ = id => document.getElementById(id);
 
-  let state = 'pick'; // pick | play | over
+  let state = 'pick'; // pick | lobby | play | over
   let attackPct = 25;
   let map = null;
   let human = null;
-  let mapType = 'world'; // world | random
+  let mapType = 'world';
   let booted = false;
-  const settings = { players: 27, teams: 0 }; // teams: 0 = FFA
-  const TEAM_HUES = [45, 210, 0, 130]; // takım 1 = altın (insan takımı)
+  const settings = { players: 27, teams: 0 };
+  const TEAM_HUES = [45, 210, 0, 130];
+
+  // çevrimiçi durum
+  let online = false;
+  let lobbyDeadline = 0;   // host: gerçek zaman; istemci: tahmini
+  let humanSpots = [];     // lobide seçilen insan doğum noktaları [[x,y],...]
+  let mySpawned = false;
+  let gameStarted = false;
 
   // ---- Kurulum ----
 
   const MAP_MASKS = { world: () => WORLD_MASK, europe: () => EUROPE_MASK, med: () => MED_MASK };
   const MAP_TEMPLATES = { random: 'continent', arch: 'arch', duo: 'duo' };
 
-  function boot(type) {
-    mapType = type;
+  function buildMap(type, seed) {
     if (MAP_MASKS[type]) {
       const mask = MAP_MASKS[type]();
       CFG.MAP_W = mask.w;
       CFG.MAP_H = mask.h;
-      map = MapGen.fromMask(mask);
-    } else {
-      CFG.MAP_W = 960;
-      CFG.MAP_H = 600;
-      map = MapGen.generate((Math.random() * 1e9) | 0, MAP_TEMPLATES[type]);
+      return MapGen.fromMask(mask);
     }
-    Game.init(map);
+    CFG.MAP_W = 960;
+    CFG.MAP_H = 600;
+    return MapGen.generate(seed, MAP_TEMPLATES[type]);
+  }
+
+  function boot(type, seed) {
+    mapType = type;
+    if (seed === undefined) seed = (Math.random() * 1e9) | 0;
+    map = buildMap(type, seed);
+    Game.init(map, seed);
+    bindCallbacks();
+    if (!online) {
+      human = addHuman(0, myName());
+      Game.humanId = 1;
+    }
+    Render.init(canvas, map);
+    document.querySelectorAll('#mapselect button').forEach(b =>
+      b.classList.toggle('active', b.dataset.m === type));
+    if (!booted) { booted = true; requestAnimationFrame(frame); }
+  }
+
+  function addHuman(slot, name) {
+    let col;
+    if (settings.teams > 0) {
+      const team = (slot % settings.teams) + 1;
+      col = hslToRgb(TEAM_HUES[(team - 1) % TEAM_HUES.length], 62, 44 + (slot % 3) * 8);
+      const p = Game.addPlayer(name, col, false);
+      p.team = team;
+      return p;
+    }
+    col = HUMAN_COLORS[slot % HUMAN_COLORS.length];
+    return Game.addPlayer(name, col, false);
+  }
+
+  function bindCallbacks() {
     Game.onBoatSunk = b => {
       if (b.from === Game.humanId) toast('⛵ Gemin denizde battı — asker tükendi');
     };
@@ -51,14 +92,36 @@
       if (newOwner === Game.humanId) toast('🎉 ' + BNAMES[bld.type] + ' ele geçirdin!');
       else if (prevOwner === Game.humanId) toast('💔 ' + BNAMES[bld.type] + "'ni kaybettin");
     };
-    Bots.onOffer = botId => addOffer(botId);
+    Game.onPeaceResult = (fromId, targetId, accept) => {
+      if (fromId === Game.humanId) {
+        toast(accept ? '🕊️ ' + Game.players[targetId].name + ' barışı kabul etti'
+                     : '✗ ' + Game.players[targetId].name + ' teklifi reddetti');
+      } else if (targetId === Game.humanId && accept) {
+        toast('🕊️ ' + Game.players[fromId].name + ' ile pakt yapıldı');
+      }
+    };
+    Game.onHumanPeaceOffer = (fromId, toId) => {
+      if (toId === Game.humanId) addOffer(fromId);
+    };
+    Bots.onOffer = (botId, humanId) => {
+      if (humanId === Game.humanId) addOffer(botId);
+    };
     $('offers').innerHTML = '';
-    human = Game.addPlayer('Sen', { r: 240, g: 200, b: 60 }, false);
-    Render.init(canvas, map);
-    document.querySelectorAll('#mapselect button').forEach(b =>
-      b.classList.toggle('active', b.dataset.m === type));
-    if (!booted) { booted = true; requestAnimationFrame(frame); }
   }
+
+  function myName() {
+    const v = $('name-input') ? $('name-input').value.trim() : '';
+    return (v || 'Oyuncu').slice(0, 14);
+  }
+
+  // ---- Komut yolu: solo anında, online host üzerinden ----
+
+  function issue(cmd) {
+    if (online) Net.sendCmd(cmd);
+    else Game.execCommand(Game.humanId, cmd);
+  }
+
+  // ---- Menü / ayar arayüzü ----
 
   document.querySelectorAll('#mapselect button').forEach(b =>
     b.addEventListener('click', () => { if (state === 'pick') boot(b.dataset.m); }));
@@ -75,14 +138,208 @@
         x.classList.toggle('active', x === b));
     }));
 
+  // ---- Çevrimiçi oda ----
+
+  function netAvailable() { return typeof Peer !== 'undefined'; }
+
+  $('btn-host').addEventListener('click', () => {
+    if (state !== 'pick') return;
+    if (!netAvailable()) { toast('Çevrimiçi mod yüklenemedi (internet?)'); return; }
+    $('btn-host').disabled = true;
+    Net.onEvent = onNetEvent;
+    Net.host(myName(), (err, code) => {
+      $('btn-host').disabled = false;
+      if (err) { toast('Oda kurulamadı: ' + err); return; }
+      online = true;
+      const seed = (Math.random() * 1e9) | 0;
+      enterLobbyAsHost(code, seed);
+    });
+  });
+
+  $('btn-join').addEventListener('click', () => {
+    if (state !== 'pick') return;
+    if (!netAvailable()) { toast('Çevrimiçi mod yüklenemedi (internet?)'); return; }
+    const code = $('code-input').value.trim().toUpperCase();
+    if (code.length !== 4) { toast('4 harfli oda kodunu gir'); return; }
+    $('btn-join').disabled = true;
+    Net.onEvent = onNetEvent;
+    Net.join(code, myName(), err => {
+      $('btn-join').disabled = false;
+      if (err) { toast('Katılamadın: ' + err); return; }
+      online = true;
+      toast('Odaya bağlanıldı, harita bekleniyor...');
+    });
+  });
+
+  let hostState = null; // host: {code, seed, spawns:[{pid,x,y}]}
+
+  function enterLobbyAsHost(code, seed) {
+    hostState = { code, seed, spawns: [] };
+    Game.humanId = 1;
+    boot(mapType, seed);
+    human = addHuman(0, Net.roster[0].name);
+    state = 'lobby';
+    lobbyDeadline = Date.now() + 30000;
+    showLobbyUI(code);
+    // lobi durumunu periyodik yayınla
+    hostState.timer = setInterval(() => {
+      if (state !== 'lobby') { clearInterval(hostState.timer); return; }
+      Net.broadcast(lobbyMsg());
+      if (Date.now() >= lobbyDeadline) hostStartGame();
+    }, 800);
+  }
+
+  function lobbyMsg() {
+    return {
+      t: 'lobby',
+      code: hostState.code,
+      seed: hostState.seed,
+      mapType, settings,
+      roster: Net.roster,
+      spawns: hostState.spawns,
+      secondsLeft: Math.max(0, Math.ceil((lobbyDeadline - Date.now()) / 1000)),
+    };
+  }
+
+  function hostStartGame() {
+    clearInterval(hostState.timer);
+    // doğum yeri seçmeyenlere rastgele yer ata (açık koordinat yayınlanır)
+    for (let slot = 0; slot < Net.roster.length; slot++) {
+      const pid = slot + 1;
+      if (Game.players[pid] && Game.players[pid].pixels > 0) continue;
+      for (let t = 0; t < 2000; t++) {
+        const i = (Math.random() * Game.W * Game.H) | 0;
+        if (Game.spawnable[i] !== 1 || Game.owner[i] !== 0) continue;
+        const cmd = { type: 'spawn', x: i % Game.W, y: (i / Game.W) | 0 };
+        applyLobbyCmd(pid, cmd);
+        Net.broadcast({ t: 'lobbycmd', pid, cmd });
+        break;
+      }
+    }
+    Net.lobbyOpen = false;
+    Net.broadcast({ t: 'start' });
+    startOnlineGame();
+  }
+
+  function onNetEvent(type, d) {
+    if (type === 'rosterChanged') {
+      // host: yeni oyuncuları ekle
+      while (Game.players.length - 1 < Net.roster.length) {
+        addHuman(Game.players.length - 1, Net.roster[Game.players.length - 1].name);
+      }
+      updateLobbyPlayers();
+      Net.broadcast(lobbyMsg());
+    } else if (type === 'lobbyState') {
+      // istemci: ilk mesajda haritayı kur, sonra kadroyu eşitle
+      if (state === 'pick') {
+        Object.assign(settings, d.settings);
+        Game.humanId = Net.myId();
+        boot(d.mapType, d.seed);
+        state = 'lobby';
+        showLobbyUI(d.code);
+      }
+      while (Game.players.length - 1 < d.roster.length) {
+        addHuman(Game.players.length - 1, d.roster[Game.players.length - 1].name);
+      }
+      Net.roster = d.roster;
+      human = Game.players[Net.myId()];
+      // kaçırılan spawn'ları uygula (humanSpots ve hazır işaretleri de güncellenir)
+      for (const s of d.spawns) {
+        applyLobbyCmd(s.pid, { type: 'spawn', x: s.x, y: s.y });
+      }
+      lobbyDeadline = Date.now() + d.secondsLeft * 1000;
+      updateLobbyPlayers();
+    } else if (type === 'lobbyCmd') {
+      applyLobbyCmd(d.pid, d.cmd);
+      if (Net.isHost) hostState.spawns.push({ pid: d.pid, x: d.cmd.x, y: d.cmd.y });
+    } else if (type === 'start') {
+      startOnlineGame();
+    } else if (type === 'peerLeft') {
+      const p = Game.players[d.slot + 1];
+      if (p) toast('👋 ' + p.name + ' ayrıldı');
+    } else if (type === 'hostLost') {
+      if (state === 'play' || state === 'lobby') {
+        endGame(false, 'Oda kurucusunun bağlantısı koptu.');
+      }
+    } else if (type === 'full') {
+      toast('Oda dolu veya oyun çoktan başladı');
+    }
+  }
+
+  function applyLobbyCmd(pid, cmd) {
+    if (cmd.type !== 'spawn') return;
+    const p = Game.players[pid];
+    if (!p || p.pixels > 0) return;
+    Game.execCommand(pid, { type: 'spawn', x: cmd.x, y: cmd.y });
+    humanSpots.push([cmd.x, cmd.y]);
+    if (pid === Game.humanId) mySpawned = true;
+    updateLobbyPlayers();
+  }
+
+  function showLobbyUI(code) {
+    $('banner').classList.add('hidden');
+    $('mapselect').classList.add('hidden');
+    $('settings').classList.add('hidden');
+    $('online').classList.add('hidden');
+    $('lobbypanel').classList.remove('hidden');
+    $('lobby-code').textContent = code;
+    const link = location.origin + location.pathname + '?room=' + code;
+    $('lobby-link').value = link;
+    $('btn-start-now').classList.toggle('hidden', !Net.isHost);
+    updateLobbyPlayers();
+  }
+
+  function updateLobbyPlayers() {
+    if (state !== 'lobby') return;
+    let html = '';
+    for (let slot = 0; slot < Net.roster.length; slot++) {
+      const p = Game.players[slot + 1];
+      const ready = p && p.pixels > 0 ? ' ✓' : ' …';
+      const col = p ? p.cssColor : '#888';
+      html += `<div class="lbrow"><span class="lbdot" style="background:${col}"></span>` +
+              `<span class="lbname">${Net.roster[slot].name}${ready}</span></div>`;
+    }
+    $('lobby-players').innerHTML = html;
+  }
+
+  $('btn-copy').addEventListener('click', () => {
+    $('lobby-link').select();
+    try { document.execCommand('copy'); toast('Link kopyalandı'); } catch (e) {}
+    if (navigator.clipboard) navigator.clipboard.writeText($('lobby-link').value).catch(() => {});
+  });
+
+  $('btn-start-now').addEventListener('click', () => {
+    if (Net.isHost && state === 'lobby') hostStartGame();
+  });
+
+  function startOnlineGame() {
+    if (gameStarted) return;
+    gameStarted = true;
+    human = Game.players[Game.humanId];
+    // botlar: deterministik (paylaşılan rng) → her istemcide birebir aynı
+    const botCount = clamp(settings.players - Net.roster.length, 0, 60);
+    spawnBots(humanSpots, botCount, Net.roster.length);
+    state = 'play';
+    $('lobbypanel').classList.add('hidden');
+    $('hud').classList.remove('hidden');
+    $('lb').classList.remove('hidden');
+    $('piepanel').classList.remove('hidden');
+    $('bottom').classList.remove('hidden');
+    lastTime = performance.now();
+    acc = 0;
+  }
+
+  // ---- Solo başlangıç ----
+
   function startGame(cx, cy) {
     if (settings.teams > 0) human.team = 1;
     Game.spawn(human, cx, cy);
-    spawnBots(cx, cy);
+    spawnBots([[cx, cy]], clamp(settings.players - 1, 1, 60), 1);
     state = 'play';
     $('banner').classList.add('hidden');
     $('mapselect').classList.add('hidden');
     $('settings').classList.add('hidden');
+    $('online').classList.add('hidden');
     $('hud').classList.remove('hidden');
     $('lb').classList.remove('hidden');
     $('piepanel').classList.remove('hidden');
@@ -90,33 +347,36 @@
     lastTime = performance.now();
   }
 
-  function spawnBots(hx, hy) {
+  // Deterministik bot yerleştirme (Game.rng): online modda tüm istemciler aynı
+  function spawnBots(spots, botCount, humanCount) {
     const { W, H } = Game;
-    const names = BOT_NAMES.slice().sort(() => Math.random() - 0.5);
-    const spots = [[hx, hy]];
-    const botCount = clamp(settings.players - 1, 1, 60);
+    const names = BOT_NAMES.slice();
+    for (let i = names.length - 1; i > 0; i--) {
+      const j = (Game.rng() * (i + 1)) | 0;
+      [names[i], names[j]] = [names[j], names[i]];
+    }
+    const allSpots = spots.slice();
     let placed = 0;
     for (let b = 0; b < botCount; b++) {
       let found = null;
       for (let t = 0; t < 800; t++) {
-        const i = (Math.random() * W * H) | 0;
+        const i = (Game.rng() * W * H) | 0;
         if (Game.spawnable[i] !== 1 || Game.owner[i] !== 0) continue;
         const x = i % W, y = (i / W) | 0;
         let ok = true;
-        for (const [sx, sy] of spots) {
+        for (const [sx, sy] of allSpots) {
           const dx = x - sx, dy = y - sy;
           if (dx * dx + dy * dy < CFG.MIN_SPAWN_DIST * CFG.MIN_SPAWN_DIST) { ok = false; break; }
         }
         if (ok) { found = [x, y]; break; }
       }
       if (!found) continue;
-      spots.push(found);
-      const team = settings.teams > 0 ? (b % settings.teams) + 1 : 0;
+      allSpots.push(found);
+      const team = settings.teams > 0 ? ((b + humanCount) % settings.teams) + 1 : 0;
       let col;
       if (settings.teams > 0) {
-        // takım rengi: aynı ton, üyeler sadece açıklıkla ayrılır → takımlar net görünür
         const hue = TEAM_HUES[(team - 1) % TEAM_HUES.length];
-        const member = (b / settings.teams) | 0;
+        const member = ((b + humanCount) / settings.teams) | 0;
         col = hslToRgb(hue, 62, 36 + (member % 4) * 7);
       } else {
         const hue = (placed * 137.508) % 360;
@@ -134,22 +394,50 @@
 
   let lastTime = 0, acc = 0, hudTimer = 0;
 
+  function stepTick() {
+    if (online && Net.isHost) {
+      const cmds = Net.takePending();
+      Net.broadcast({ t: 'batch', tick: Game.tick + 1, cmds });
+      for (const c of cmds) Game.execCommand(c.pid, c.cmd);
+    }
+    Game.processTick();
+    Bots.tick();
+    if (Game.tick % CFG.TICKS_PER_CYCLE === 0) checkEnd();
+  }
+
   function frame(now) {
     if (state === 'play') {
-      acc += now - lastTime;
-      lastTime = now;
-      let guard = 0;
-      while (acc >= CFG.TICK_MS && guard++ < 24) {
-        Game.processTick();
-        Bots.tick();
-        acc -= CFG.TICK_MS;
-        if (Game.tick % CFG.TICKS_PER_CYCLE === 0) checkEnd();
+      if (!online || Net.isHost) {
+        acc += now - lastTime;
+        lastTime = now;
+        let guard = 0;
+        while (acc >= CFG.TICK_MS && guard++ < 24) {
+          stepTick();
+          acc -= CFG.TICK_MS;
+        }
+        if (acc > CFG.TICK_MS * 4) acc = CFG.TICK_MS * 4;
+      } else {
+        // istemci: host'un damgaladığı tick paketlerini sırayla işle
+        lastTime = now;
+        let guard = 0;
+        while (guard++ < 40) {
+          const cmds = Net.batchQueue.get(Game.tick + 1);
+          if (cmds === undefined) break;
+          Net.batchQueue.delete(Game.tick + 1);
+          for (const c of cmds) Game.execCommand(c.pid, c.cmd);
+          Game.processTick();
+          Bots.tick();
+          if (Game.tick % CFG.TICKS_PER_CYCLE === 0) checkEnd();
+        }
       }
-      if (acc > CFG.TICK_MS * 4) acc = CFG.TICK_MS * 4; // sekme geri planda kaldıysa birikimi at
       if (now - hudTimer > 150) { hudTimer = now; updateHUD(); updateLeaderboard(); }
-      if (human.pixels === 0) checkEnd();
     } else {
       lastTime = now;
+      if (state === 'lobby' && now - hudTimer > 300) {
+        hudTimer = now;
+        const s = Math.max(0, Math.ceil((lobbyDeadline - Date.now()) / 1000));
+        $('lobby-count').textContent = s;
+      }
     }
     Render.draw();
     requestAnimationFrame(frame);
@@ -193,11 +481,12 @@
 
   $('btn-restart').addEventListener('click', () => location.reload());
 
-  // ---- Arayüz ----
+  // ---- HUD ----
 
   function updateHUD() {
-    const fullB = CFG.FULL_INCOME_MULT * human.pixels;
-    const maxB = CFG.MAX_BALANCE_MULT * human.pixels;
+    const effPix = human.pixels + CFG.CITY_CAP_BONUS * human.bCount.city;
+    const fullB = CFG.FULL_INCOME_MULT * effPix;
+    const maxB = CFG.MAX_BALANCE_MULT * effPix;
     const red = human.balance > fullB;
     const bal = $('hud-balance');
     bal.textContent = fmt(human.balance);
@@ -229,15 +518,17 @@
             `</div>`;
     }
     $('attacklist').innerHTML = ah;
-    $('attacklist').classList.toggle('hidden', ah === '');
+    $('attacklist').classList.toggle('hidden', ah === '' || state !== 'play');
   }
 
   $('attacklist').addEventListener('click', e => {
     const el = e.target;
     if (el.dataset.key !== undefined) {
-      if (Game.cancelAttack(human.id, el.dataset.key)) toast('Saldırı iptal — askerler eve döndü');
+      issue({ type: 'cancel', key: el.dataset.key });
+      toast('Saldırı iptal ediliyor...');
     } else if (el.dataset.boat !== undefined) {
-      if (Game.recallBoat(human.id, +el.dataset.boat)) toast('⛵ Gemi geri çağrıldı');
+      issue({ type: 'recall', boatId: +el.dataset.boat });
+      toast('⛵ Gemi geri çağrılıyor...');
     }
   });
 
@@ -281,14 +572,12 @@
       const rows = Game.players
         .filter(p => p && p.pixels > 0)
         .sort((a, b) => b.pixels - a.pixels);
-      let shown = 0;
-      for (let k = 0; k < rows.length; k++) {
-        if (k < 12) { slices.push({ frac: rows[k].pixels / total, css: rows[k].cssColor }); shown += rows[k].pixels; }
+      for (let k = 0; k < rows.length && k < 12; k++) {
+        slices.push({ frac: rows[k].pixels / total, css: rows[k].cssColor });
       }
       const rest = rows.slice(12).reduce((s, p) => s + p.pixels, 0);
       if (rest > 0) slices.push({ frac: rest / total, css: '#7a828c' });
     }
-    // kalan tarafsız arazi
     const used = slices.reduce((s, x) => s + x.frac, 0);
     if (used < 1) slices.push({ frac: 1 - used, css: '#b2aa94' });
 
@@ -303,7 +592,6 @@
       c2.fill();
       ang = a2;
     }
-    // ortası delik (halka) + kendi payın
     c2.globalCompositeOperation = 'destination-out';
     c2.beginPath(); c2.arc(cx, cy, r, 0, Math.PI * 2); c2.fill();
     c2.globalCompositeOperation = 'source-over';
@@ -338,6 +626,7 @@
     else if (e.key === '2') setPct(25);
     else if (e.key === '3') setPct(50);
     else if (e.key === '4') setPct(100);
+    else if (e.key === 'Escape') hideMenu();
   });
 
   let toastTimer = 0;
@@ -346,12 +635,137 @@
     t.textContent = msg;
     t.classList.remove('hidden');
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => t.classList.add('hidden'), 1800);
+    toastTimer = setTimeout(() => t.classList.add('hidden'), 2000);
   }
 
+  // ---- Saldırı seçim menüsü (⚔️/⛵/🤝/💥) ----
+
+  let pending = null;
+
+  function showMenu(sx, sy, cell, target, canLand, canSea) {
+    pending = { cell, target };
+    const m = $('actmenu');
+    $('act-sink').classList.add('hidden');
+    $('act-land').classList.remove('hidden');
+    $('act-sea').classList.remove('hidden');
+    const pact = target > 0 && Game.hasPact(Game.humanId, target);
+    const landBtn = $('act-land');
+    landBtn.textContent = pact ? '🗡️' : '⚔️';
+    landBtn.title = pact ? 'İhanet et ve saldır' : 'Karadan saldır';
+    landBtn.classList.toggle('disabled', !canLand);
+    $('act-sea').classList.toggle('disabled', !canSea || pact);
+    const pb = $('act-peace');
+    pb.classList.remove('hidden');
+    pb.textContent = pact ? '🕊️' : '🤝';
+    pb.title = pact ? 'Pakt zaten var' : 'Barış teklif et';
+    pb.classList.toggle('hidden', target === 0);
+    pb.classList.toggle('disabled', target === 0 || pact || Game.isTraitor(Game.humanId));
+    m.classList.remove('hidden');
+    placeMenu(m, sx, sy);
+  }
+
+  function placeMenu(m, sx, sy) {
+    const r = m.getBoundingClientRect();
+    m.style.left = clamp(sx - r.width / 2, 4, window.innerWidth - r.width - 4) + 'px';
+    m.style.top = clamp(sy - r.height - 12, 4, window.innerHeight - r.height - 4) + 'px';
+  }
+
+  function hideMenu() {
+    pending = null;
+    $('actmenu').classList.add('hidden');
+    $('buildmenu').classList.add('hidden');
+  }
+
+  $('act-land').addEventListener('click', () => {
+    if (!pending) return;
+    const amount = human.balance * attackPct / 100;
+    if (amount < 10) { toast('Yeterli gücün yok'); hideMenu(); return; }
+    if (pending.target > 0 && Game.hasPact(Game.humanId, pending.target)) {
+      issue({ type: 'betray', target: pending.target, pct: attackPct });
+      toast('🗡️ İhanet! Bir süre kimse seninle pakt yapmaz');
+    } else {
+      issue({ type: 'attack', target: pending.target, pct: attackPct });
+    }
+    hideMenu();
+  });
+
+  $('act-sea').addEventListener('click', () => {
+    if (!pending) return;
+    const amount = human.balance * attackPct / 100;
+    if (amount < CFG.BOAT_MIN) { toast('Gemi için en az ' + CFG.BOAT_MIN + ' güç gerek'); hideMenu(); return; }
+    issue({ type: 'boat', cell: pending.cell, pct: attackPct });
+    toast('⛵ Gemi yola çıkıyor');
+    hideMenu();
+  });
+
+  const peaceAsked = new Map();
+  $('act-peace').addEventListener('click', () => {
+    if (!pending || pending.target === 0) return;
+    const t = pending.target;
+    const b = Game.players[t];
+    hideMenu();
+    if (Game.isTraitor(Game.humanId)) { toast('İhanetinden sonra kimse sana güvenmiyor'); return; }
+    if (peaceAsked.has(t) && Game.cycle - peaceAsked.get(t) < 15) { toast(b.name + ' henüz cevap vermek istemiyor'); return; }
+    peaceAsked.set(t, Game.cycle);
+    toast('🕊️ Teklif ' + b.name + "'e iletildi...");
+    issue({ type: 'peace', target: t });
+  });
+
+  $('act-sink').addEventListener('click', () => {
+    if (!pending || pending.boatId === undefined) return;
+    const amount = human.balance * attackPct / 100;
+    if (amount < 10) { toast('Yeterli gücün yok'); hideMenu(); return; }
+    issue({ type: 'sink', boatId: pending.boatId, pct: attackPct });
+    toast('⚔️ Donanma muharebeye gidiyor');
+    hideMenu();
+  });
+
+  // Botlardan / insanlardan gelen barış teklifleri
+  function addOffer(fromId) {
+    if (state !== 'play') return;
+    if (document.querySelector(`[data-offer="${fromId}"]`)) return;
+    if ($('offers').children.length >= 3) return;
+    const b = Game.players[fromId];
+    const div = document.createElement('div');
+    div.className = 'offer';
+    div.dataset.offer = fromId;
+    div.innerHTML = `<span class="lbdot" style="background:${b.cssColor}"></span>` +
+      `<span>🕊️ ${b.name} barış istiyor</span><button class="ok">✓</button><button class="no">✗</button>`;
+    div.querySelector('.ok').onclick = () => {
+      issue({ type: 'acceptPact', target: fromId });
+      div.remove();
+    };
+    div.querySelector('.no').onclick = () => div.remove();
+    $('offers').appendChild(div);
+    setTimeout(() => div.remove(), 15000);
+  }
+
+  // ---- İnşa menüsü ----
+
+  function showBuildMenu(sx, sy, cell) {
+    pending = { buildCell: cell };
+    const m = $('buildmenu');
+    for (const type of ['city', 'tower', 'port']) {
+      const cost = Game.buildCost(Game.humanId, type);
+      $('cost-' + type).textContent = fmt(cost);
+      const btn = m.querySelector(`[data-b="${type}"]`);
+      let bad = human.balance < cost;
+      if (type === 'port' && !Game.nearWater(cell, 2)) bad = true;
+      btn.classList.toggle('disabled', bad);
+    }
+    m.classList.remove('hidden');
+    placeMenu(m, sx, sy);
+  }
+
+  document.querySelectorAll('#buildmenu button').forEach(btn =>
+    btn.addEventListener('click', () => {
+      if (!pending || pending.buildCell === undefined) return;
+      issue({ type: 'build', cell: pending.buildCell, kind: btn.dataset.b });
+      toast('🏗️ İnşa ediliyor');
+      hideMenu();
+    }));
+
   // ---- Fare ----
-  // Kendi toprağından sürükle = yönlü saldırı oku; başka yerden sürükle veya
-  // sağ tuşla sürükle = kaydır; tıkla = ⚔️/⛵ menüsü; tekerlek = yakınlaştır
 
   let mouseDown = false, panning = false, aiming = false, aimStartCell = -1;
   let lastMX = 0, lastMY = 0, downX = 0, downY = 0;
@@ -390,7 +804,7 @@
       const hadArrow = Render.aim !== null;
       Render.aim = null;
       if (hadArrow) handleAimRelease(e.clientX, e.clientY);
-      else handleClick(e.clientX, e.clientY); // sürüklemeden bırakıldı → normal tıklama (inşa menüsü)
+      else handleClick(e.clientX, e.clientY);
       return;
     }
     if (panning) return;
@@ -398,7 +812,12 @@
     handleClick(e.clientX, e.clientY);
   });
 
-  // Ok bırakıldı: hedefe DOĞRU yönlü saldırı (sınır yoksa gemi)
+  canvas.addEventListener('wheel', e => {
+    e.preventDefault();
+    hideMenu();
+    Render.zoomAt(e.clientX, e.clientY, Math.pow(1.1, -e.deltaY / 100));
+  }, { passive: false });
+
   function handleAimRelease(sx, sy) {
     let i = Render.screenToCell(sx, sy);
     if (i < 0) return;
@@ -408,209 +827,20 @@
       i = n;
     }
     const t = Game.owner[i];
-    if (t === human.id) return;
-    if (t > 0 && Game.allied(human.id, t)) { toast('Müttefik toprağına saldıramazsın'); return; }
-    if (t > 0 && Game.hasPact(human.id, t)) { toast('🕊️ Pakt var — bozmak için menüden 🗡️ kullan'); return; }
+    if (t === Game.humanId) return;
+    if (t > 0 && Game.allied(Game.humanId, t)) { toast('Müttefik toprağına saldıramazsın'); return; }
+    if (t > 0 && Game.hasPact(Game.humanId, t)) { toast('🕊️ Pakt var — bozmak için menüden 🗡️ kullan'); return; }
     const amount = human.balance * attackPct / 100;
     if (amount < 10) { toast('Yeterli gücün yok'); return; }
-    if (Game.canLandAttack(human.id, t)) {
-      Game.launchAttack(human.id, t, amount, i);
+    if (Game.canLandAttack(Game.humanId, t)) {
+      issue({ type: 'attack', target: t, pct: attackPct, dir: i });
+    } else if (Game.canSeaAttack(Game.humanId, i)) {
+      if (amount < CFG.BOAT_MIN) { toast('Gemi için en az ' + CFG.BOAT_MIN + ' güç gerek'); return; }
+      issue({ type: 'boat', cell: i, pct: attackPct });
+      toast('⛵ Gemi yola çıkıyor');
     } else {
-      const r = Game.launchBoat(human.id, i, amount);
-      if (r === 'ok') toast('⛵ Gemi yola çıktı');
-      else if (r === 'weak') toast('Gemi için en az ' + CFG.BOAT_MIN + ' güç gerek');
-      else if (r === 'nocoast') toast('Hedefin ulaşılabilir kıyısı yok');
-      else if (r === 'noroute') toast('Deniz yolu bulunamadı');
+      toast('Bu hedefe ne karadan ne denizden ulaşılabiliyor');
     }
-  }
-
-  canvas.addEventListener('wheel', e => {
-    e.preventDefault();
-    hideMenu();
-    Render.zoomAt(e.clientX, e.clientY, Math.pow(1.1, -e.deltaY / 100));
-  }, { passive: false });
-
-  function handleClick(sx, sy) {
-    const i = Render.screenToCell(sx, sy);
-    if (i < 0) return;
-
-    if (state === 'pick') {
-      if (Game.spawnable[i] !== 1) { toast('Bir kıtada yer seç (çok küçük adalar olmaz)'); return; }
-      startGame(i % Game.W, (i / Game.W) | 0);
-      return;
-    }
-    if (state !== 'play' || human.pixels === 0) return;
-
-    // önce gemi kontrolü: tıklama bir düşman gemisinin üstündeyse muharebe menüsü
-    const boat = findBoatAt(sx, sy);
-    if (boat) {
-      if (boat.from === human.id) { toast('Kendi gemin — geri çağırmak için listedeki ↩'); return; }
-      if (Game.allied(human.id, boat.from) || Game.hasPact(human.id, boat.from)) { toast('Dost gemisi'); return; }
-      showBoatMenu(sx, sy, boat);
-      return;
-    }
-
-    // suya tıklandıysa yakındaki karayı hedefle
-    if (Game.terrain[i] !== 1) {
-      const n = nearestLand(i);
-      if (n < 0) { hideMenu(); toast('Açık deniz — bir kıyıya tıkla'); return; }
-      i = n;
-    }
-    const target = Game.owner[i];
-    if (target === human.id) { hideMenu(); showBuildMenu(sx, sy, i); return; } // kendi toprağın → inşa
-    if (target > 0 && Game.allied(human.id, target)) { hideMenu(); toast('Müttefik toprağı'); return; }
-
-    // seçenekleri hesapla ve ⚔️/⛵ menüsünü aç
-    const canLand = Game.canLandAttack(human.id, target);
-    const canSea = Game.canSeaAttack(human.id, i);
-    if (!canLand && !canSea) { hideMenu(); toast('Bu hedefe ne karadan ne denizden ulaşılabiliyor'); return; }
-    showMenu(sx, sy, i, target, canLand, canSea);
-  }
-
-  // ---- Saldırı seçim menüsü (⚔️ kara / ⛵ deniz) ----
-
-  let pending = null; // {cell, target}
-
-  function showMenu(sx, sy, cell, target, canLand, canSea) {
-    pending = { cell, target };
-    const m = $('actmenu');
-    $('act-sink').classList.add('hidden');
-    $('act-land').classList.remove('hidden');
-    $('act-sea').classList.remove('hidden');
-    const pact = target > 0 && Game.hasPact(Game.humanId, target);
-    const landBtn = $('act-land');
-    landBtn.textContent = pact ? '🗡️' : '⚔️';
-    landBtn.title = pact ? 'İhanet et ve saldır' : 'Karadan saldır';
-    landBtn.classList.toggle('disabled', !canLand);
-    $('act-sea').classList.toggle('disabled', !canSea || pact);
-    const pb = $('act-peace');
-    pb.textContent = pact ? '🕊️' : '🤝';
-    pb.title = pact ? 'Pakt zaten var' : 'Barış teklif et';
-    pb.classList.toggle('hidden', target === 0);
-    pb.classList.toggle('disabled', target === 0 || pact || Game.isTraitor(Game.humanId));
-    m.classList.remove('hidden');
-    const r = m.getBoundingClientRect();
-    m.style.left = clamp(sx - r.width / 2, 4, window.innerWidth - r.width - 4) + 'px';
-    m.style.top = clamp(sy - r.height - 12, 4, window.innerHeight - r.height - 4) + 'px';
-  }
-
-  function hideMenu() {
-    pending = null;
-    $('actmenu').classList.add('hidden');
-    $('buildmenu').classList.add('hidden');
-  }
-
-  // ---- İnşa menüsü (kendi toprağına tıklayınca) ----
-
-  function showBuildMenu(sx, sy, cell) {
-    pending = { buildCell: cell };
-    const m = $('buildmenu');
-    for (const type of ['city', 'tower', 'port']) {
-      const cost = Game.buildCost(human.id, type);
-      $('cost-' + type).textContent = fmt(cost);
-      const btn = m.querySelector(`[data-b="${type}"]`);
-      let bad = human.balance < cost;
-      if (type === 'port' && !Game.nearWater(cell, 2)) bad = true;
-      btn.classList.toggle('disabled', bad);
-    }
-    m.classList.remove('hidden');
-    const r = m.getBoundingClientRect();
-    m.style.left = clamp(sx - r.width / 2, 4, window.innerWidth - r.width - 4) + 'px';
-    m.style.top = clamp(sy - r.height - 12, 4, window.innerHeight - r.height - 4) + 'px';
-  }
-
-  document.querySelectorAll('#buildmenu button').forEach(btn =>
-    btn.addEventListener('click', () => {
-      if (!pending || pending.buildCell === undefined) return;
-      const r = Game.build(human.id, pending.buildCell, btn.dataset.b);
-      if (r === 'ok') toast('🏗️ İnşa edildi');
-      else if (r === 'cash') toast('Yeterli gücün yok');
-      else if (r === 'coast') toast('Liman kıyıya kurulmalı');
-      else if (r === 'near') toast('Başka bir binaya çok yakın');
-      else if (r === 'notown') toast('Burası senin toprağın değil');
-      hideMenu();
-    }));
-
-  $('act-land').addEventListener('click', () => {
-    if (!pending) return;
-    const amount = human.balance * attackPct / 100;
-    if (amount < 10) { toast('Yeterli gücün yok'); hideMenu(); return; }
-    if (pending.target > 0 && Game.hasPact(Game.humanId, pending.target)) {
-      Game.breakPact(Game.humanId, pending.target);
-      toast('🗡️ İhanet! Bir süre kimse seninle pakt yapmaz');
-    }
-    if (!Game.launchAttack(human.id, pending.target, amount)) toast('Kara sınırı kalmadı');
-    hideMenu();
-  });
-
-  const peaceAsked = new Map(); // hedef id -> son teklif döngüsü
-  $('act-peace').addEventListener('click', () => {
-    if (!pending || pending.target === 0) return;
-    const t = pending.target;
-    const b = Game.players[t];
-    hideMenu();
-    if (Game.isTraitor(Game.humanId)) { toast('İhanetinden sonra kimse sana güvenmiyor'); return; }
-    if (peaceAsked.has(t) && Game.cycle - peaceAsked.get(t) < 15) { toast(b.name + ' henüz cevap vermek istemiyor'); return; }
-    peaceAsked.set(t, Game.cycle);
-    toast('🕊️ Teklif ' + b.name + "'e iletildi...");
-    setTimeout(() => {
-      if (state !== 'play' || b.pixels === 0) return;
-      // zayıfsa büyük ihtimalle kabul eder; güçlüyse mizacına bakar
-      const accept = b.balance < human.balance * 0.9
-        ? Math.random() < 0.75
-        : Math.random() < 0.3 / b.aggr;
-      if (accept) { Game.makePact(Game.humanId, t); toast('🕊️ ' + b.name + ' barışı kabul etti'); }
-      else toast('✗ ' + b.name + ' teklifi reddetti');
-    }, 1200);
-  });
-
-  // Botlardan gelen barış teklifleri
-  function addOffer(botId) {
-    if (state !== 'play') return;
-    if (document.querySelector(`[data-offer="${botId}"]`)) return;
-    if ($('offers').children.length >= 3) return;
-    const b = Game.players[botId];
-    const div = document.createElement('div');
-    div.className = 'offer';
-    div.dataset.offer = botId;
-    div.innerHTML = `<span class="lbdot" style="background:${b.cssColor}"></span>` +
-      `<span>🕊️ ${b.name} barış istiyor</span><button class="ok">✓</button><button class="no">✗</button>`;
-    div.querySelector('.ok').onclick = () => {
-      Game.makePact(Game.humanId, botId);
-      toast('🕊️ ' + b.name + ' ile pakt yapıldı');
-      div.remove();
-    };
-    div.querySelector('.no').onclick = () => div.remove();
-    $('offers').appendChild(div);
-    setTimeout(() => div.remove(), 15000);
-  }
-
-  $('act-sea').addEventListener('click', () => {
-    if (!pending) return;
-    const amount = human.balance * attackPct / 100;
-    const r = Game.launchBoat(human.id, pending.cell, amount);
-    if (r === 'ok') toast('⛵ Gemi yola çıktı');
-    else if (r === 'weak') toast('Gemi için en az ' + CFG.BOAT_MIN + ' güç gerek');
-    else if (r === 'nocoast') toast('Hedefin ulaşılabilir kıyısı yok');
-    else if (r === 'noroute') toast('Deniz yolu bulunamadı');
-    hideMenu();
-  });
-
-  window.addEventListener('keydown', e => { if (e.key === 'Escape') hideMenu(); });
-
-  // Ekran koordinatına yakın gemi (dünya ölçeğinde ~6 hücre yarıçap)
-  function findBoatAt(sx, sy) {
-    const wx = (sx - Render.ox) / Render.zoom;
-    const wy = (sy - Render.oy) / Render.zoom;
-    const R = Math.max(4, 12 / Render.zoom);
-    let best = null, bd = R * R;
-    for (const b of Game.boats) {
-      const idx = b.path[Math.min(b.path.length - 1, Math.floor(b.pos))];
-      const bx = (idx % Game.W) + 0.5, by = ((idx / Game.W) | 0) + 0.5;
-      const d = (bx - wx) * (bx - wx) + (by - wy) * (by - wy);
-      if (d < bd) { bd = d; best = b; }
-    }
-    return best;
   }
 
   function showBoatMenu(sx, sy, boat) {
@@ -624,21 +854,22 @@
     sk.classList.remove('disabled');
     sk.title = 'Gemiye saldır (' + fmt(boat.troops) + ' asker taşıyor)';
     m.classList.remove('hidden');
-    const r = m.getBoundingClientRect();
-    m.style.left = clamp(sx - r.width / 2, 4, window.innerWidth - r.width - 4) + 'px';
-    m.style.top = clamp(sy - r.height - 12, 4, window.innerHeight - r.height - 4) + 'px';
+    placeMenu(m, sx, sy);
   }
 
-  $('act-sink').addEventListener('click', () => {
-    if (!pending || pending.boatId === undefined) return;
-    const res = Game.attackBoat(human.id, pending.boatId, human.balance * attackPct / 100);
-    if (res === 'gone') toast('Gemi artık orada değil');
-    else if (res === 'weak') toast('Yeterli gücün yok');
-    else if (res === 'blocked') toast('Dost gemisine saldıramazsın');
-    else if (res.sunk) toast('💥 Düşman gemisi batırıldı! (' + fmt(res.spent) + ' asker harcandı)');
-    else toast('⚔️ Muharebe: gemi ' + fmt(res.spent) + ' asker kaybetti, ' + fmt(res.remaining) + ' ile yola devam ediyor');
-    hideMenu();
-  });
+  function findBoatAt(sx, sy) {
+    const wx = (sx - Render.ox) / Render.zoom;
+    const wy = (sy - Render.oy) / Render.zoom;
+    const R = Math.max(4, 12 / Render.zoom);
+    let best = null, bd = R * R;
+    for (const b of Game.boats) {
+      const idx = b.path[Math.min(b.path.length - 1, Math.floor(b.pos))];
+      const bx = (idx % Game.W) + 0.5, by = ((idx / Game.W) | 0) + 0.5;
+      const d = (bx - wx) * (bx - wx) + (by - wy) * (by - wy);
+      if (d < bd) { bd = d; best = b; }
+    }
+    return best;
+  }
 
   function nearestLand(i) {
     const W = Game.W, H = Game.H;
@@ -656,7 +887,55 @@
     return best;
   }
 
+  function handleClick(sx, sy) {
+    let i = Render.screenToCell(sx, sy);
+    if (i < 0) return;
+
+    if (state === 'pick') {
+      if (Game.spawnable[i] !== 1) { toast('Bir kıtada yer seç (çok küçük adalar olmaz)'); return; }
+      startGame(i % Game.W, (i / Game.W) | 0);
+      return;
+    }
+    if (state === 'lobby') {
+      if (mySpawned) { toast('Doğum yerini zaten seçtin'); return; }
+      if (Game.spawnable[i] !== 1 || Game.owner[i] !== 0) { toast('Boş bir kıta noktası seç'); return; }
+      Net.sendLobbyCmd({ type: 'spawn', x: i % Game.W, y: (i / Game.W) | 0 });
+      return;
+    }
+    if (state !== 'play' || human.pixels === 0) return;
+
+    const boat = findBoatAt(sx, sy);
+    if (boat) {
+      if (boat.from === Game.humanId) { toast('Kendi gemin — geri çağırmak için listedeki ↩'); return; }
+      if (Game.allied(Game.humanId, boat.from) || Game.hasPact(Game.humanId, boat.from)) { toast('Dost gemisi'); return; }
+      showBoatMenu(sx, sy, boat);
+      return;
+    }
+
+    if (Game.terrain[i] !== 1) {
+      const n = nearestLand(i);
+      if (n < 0) { hideMenu(); toast('Açık deniz — bir kıyıya tıkla'); return; }
+      i = n;
+    }
+    const target = Game.owner[i];
+    if (target === Game.humanId) { hideMenu(); showBuildMenu(sx, sy, i); return; }
+    if (target > 0 && Game.allied(Game.humanId, target)) { hideMenu(); toast('Müttefik toprağı'); return; }
+
+    const canLand = Game.canLandAttack(Game.humanId, target);
+    const canSea = Game.canSeaAttack(Game.humanId, i);
+    if (!canLand && !canSea) { hideMenu(); toast('Bu hedefe ne karadan ne denizden ulaşılabiliyor'); return; }
+    showMenu(sx, sy, i, target, canLand, canSea);
+  }
+
   window.addEventListener('resize', () => { Render.resize(); });
 
+  // ---- Başlat ----
+
+  const roomParam = new URLSearchParams(location.search).get('room');
   boot('world');
+  if (roomParam && netAvailable()) {
+    $('code-input').value = roomParam.toUpperCase();
+    toast('Odaya bağlanılıyor: ' + roomParam.toUpperCase());
+    setTimeout(() => $('btn-join').click(), 400);
+  }
 })();

@@ -16,14 +16,14 @@ const Bots = {
     const fullB = CFG.FULL_INCOME_MULT * p.pixels;
 
     this.diplomacy(p, nb);
-    if (Game.cycle >= 20 && Math.random() < 0.12) this.tryBuild(p, nb);
+    if (Game.cycle >= 20 && Game.rng() < 0.12) this.tryBuild(p, nb);
 
     // Gemi: karada yayılacak yer kalmadıysa denizaşırı hedef ara
     if (!nb.hasNeutral) {
       let myBoats = 0;
       for (const b of Game.boats) if (b.from === p.id) myBoats++;
       const isolated = nb.enemies.size === 0;
-      if (myBoats === 0 && (isolated || (p.balance > fullB * 0.5 && Math.random() < 0.25))) {
+      if (myBoats === 0 && (isolated || (p.balance > fullB * 0.5 && Game.rng() < 0.25))) {
         const t = this.findSeaTarget(p);
         if (t >= 0) {
           Game.launchBoat(p.id, t, p.balance * (isolated ? 0.6 : 0.3));
@@ -69,14 +69,14 @@ const Bots = {
   tryBuild(p, nb) {
     const rich = (type, mult) => p.balance > Game.buildCost(p.id, type) * mult;
     if (nb.enemies.size > 0 && rich('tower', 2.5)) {
-      let k = (Math.random() * p.border.size) | 0;
+      let k = (Game.rng() * p.border.size) | 0;
       for (const bi of p.border) { if (k-- <= 0) { Game.build(p.id, bi, 'tower'); return; } }
     }
     if (rich('city', 3)) {
       const idx = this.randomOwnedCell(p);
       if (idx >= 0) { Game.build(p.id, idx, 'city'); return; }
     }
-    if (rich('port', 2.5) && Math.random() < 0.5) {
+    if (rich('port', 2.5) && Game.rng() < 0.5) {
       for (const bi of p.border) {
         if (Game.nearWater(bi, 2)) { Game.build(p.id, bi, 'port'); return; }
       }
@@ -87,7 +87,7 @@ const Bots = {
     const { owner } = Game;
     const N = Game.W * Game.H;
     for (let t = 0; t < 200; t++) {
-      const i = (Math.random() * N) | 0;
+      const i = (Game.rng() * N) | 0;
       if (owner[i] === p.id) return i;
     }
     return -1;
@@ -96,23 +96,26 @@ const Bots = {
   diplomacy(p, nb) {
     if (Game.cycle < 12) return; // erken oyunda diplomasi yok
 
-    // Güçlü insana komşuysak barış teklif et
-    const h = Game.players[Game.humanId];
-    if (nb.enemies.has(Game.humanId) && h && h.pixels > 0 &&
-        !Game.hasPact(p.id, Game.humanId) && !Game.isTraitor(Game.humanId) &&
-        h.balance > p.balance * 1.4 &&
-        (p.lastOffer === undefined || Game.cycle - p.lastOffer > 30) &&
-        Math.random() < 0.3) {
-      p.lastOffer = Game.cycle;
-      if (this.onOffer) this.onOffer(p.id);
+    // Güçlü bir insan komşuya barış teklif et
+    if (p.lastOffer === undefined || Game.cycle - p.lastOffer > 30) {
+      for (const tid of nb.enemies) {
+        const h = Game.players[tid];
+        if (h.isBot || h.pixels === 0) continue;
+        if (Game.hasPact(p.id, tid) || Game.isTraitor(tid)) continue;
+        if (h.balance > p.balance * 1.4 && Game.rng() < 0.3) {
+          p.lastOffer = Game.cycle;
+          if (this.onOffer) this.onOffer(p.id, tid);
+          break;
+        }
+      }
     }
 
     // Çok cepheli savaştaysak en güçlü bot komşusuyla kendiliğinden pakt
-    if (nb.enemies.size >= 2 && Math.random() < 0.1) {
+    if (nb.enemies.size >= 2 && Game.rng() < 0.1) {
       let strongest = null;
       for (const tid of nb.enemies) {
-        if (tid === Game.humanId) continue;
         const t = Game.players[tid];
+        if (!t.isBot) continue;
         if (!strongest || t.balance > strongest.balance) strongest = t;
       }
       if (strongest && !Game.isTraitor(strongest.id) && !Game.hasPact(p.id, strongest.id)) {
@@ -121,7 +124,7 @@ const Bots = {
     }
 
     // İhanet: pakt ortağından ezici derecede güçlüysek küçük ihtimalle boz
-    if (Math.random() < 0.04 * p.aggr) {
+    if (Game.rng() < 0.04 * p.aggr) {
       for (const k of Game.pacts.keys()) {
         const [a, b] = k.split(':').map(Number);
         if (a !== p.id && b !== p.id) continue;
@@ -138,7 +141,7 @@ const Bots = {
     const N = W * H;
     let weakCell = -1;
     for (let t = 0; t < 400; t++) {
-      const i = (Math.random() * N) | 0;
+      const i = (Game.rng() * N) | 0;
       if (terrain[i] !== 1) continue;
       const oo = owner[i];
       if (oo === p.id || (oo > 0 && Game.players[oo].team === p.team)) continue;

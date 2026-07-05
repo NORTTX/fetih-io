@@ -6,6 +6,15 @@ Territorial.io mantığında, tarayıcıda çalışan fetih oyunu. Aşama 1: tek
 
 `index.html` dosyasına çift tıkla — kurulum gerekmez, doğrudan tarayıcıda açılır.
 
+## Çevrimiçi oynama
+
+- **Oda Kur** düğmesiyle 4 harfli oda kodu ve paylaşılabilir link alırsın.
+- Arkadaşların linke tıklayarak (veya kodu girerek) katılır — 30 saniyelik lobi
+  geri sayımında herkes haritada doğum yerini seçer, süre bitince oyun başlar.
+- Eksik kalan yerleri botlar doldurur. Oda kurucusunun sekmesi açık kalmalı
+  (oyunu o yönetir). Teknik: WebRTC (PeerJS) üzerinden tarayıcıdan tarayıcıya,
+  deterministik kilit-adım senkronizasyonu — oyun sunucusu gerekmez.
+
 ## Nasıl oynanır
 
 - **Harita seçimi:** 🌍 Dünya, 🏰 Avrupa, ⚓ Akdeniz (gerçek haritalar) veya

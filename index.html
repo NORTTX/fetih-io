@@ -49,6 +49,32 @@
   <button data-m="random">🎲 Kıta</button>
 </div>
 
+<div id="online" class="panel">
+  <div class="setrow">
+    <span class="setlabel">İsmin</span>
+    <input type="text" id="name-input" maxlength="14" placeholder="Oyuncu">
+  </div>
+  <div class="setrow">
+    <button id="btn-host" class="netbtn">🌐 Oda Kur</button>
+    <input type="text" id="code-input" maxlength="4" placeholder="KOD">
+    <button id="btn-join" class="netbtn">Katıl</button>
+  </div>
+</div>
+
+<div id="lobbypanel" class="panel hidden">
+  <h2>Oda: <span id="lobby-code"></span></h2>
+  <div class="setrow">
+    <input type="text" id="lobby-link" readonly>
+    <button id="btn-copy" class="netbtn">📋 Kopyala</button>
+  </div>
+  <p class="lobbyhint">Haritada bir yere tıklayıp doğum yerini seç!</p>
+  <div id="lobby-players"></div>
+  <div class="lobbyrow">
+    <span>Başlamaya: <b id="lobby-count">30</b> sn</span>
+    <button id="btn-start-now" class="netbtn hidden">▶ Hemen Başlat</button>
+  </div>
+</div>
+
 <div id="settings" class="panel">
   <div class="setrow">
     <span class="setlabel">Katılımcı</span>
@@ -91,7 +117,9 @@
 
 <div id="offers"></div>
 
+<script src="https://unpkg.com/peerjs@1.5.5/dist/peerjs.min.js"></script>
 <script src="js/config.js"></script>
+<script src="js/net.js"></script>
 <script src="js/worldmap.js"></script>
 <script src="js/regionmaps.js"></script>
 <script src="js/mapgen.js"></script>
