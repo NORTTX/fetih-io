@@ -79,33 +79,72 @@ const Render = {
     this.drawAim(ctx);
   },
 
-  // Piksel bina sprite'ları: o = sahip rengi, w = duvar, s = taş, p = iskele
+  // Piksel bina sprite'ları — k: kontur, o: sahip rengi, w: duvar, g: cam,
+  // s/S: taş (açık/koyu), r: kırmızı, W: beyaz, y: ışık, b: ahşap
   BUILDING_SPRITES: {
-    city: ['.ooo.', 'ooooo', 'wwwww', 'w.w.w', 'wwwww'],
-    tower: ['.o.', '.o.', 'sss', '.s.', '.s.', 'sss'],
-    port: ['..o..', '..p..', '..p..', 'ppppp'],
+    // iki evli kasaba, üçgen çatılar sahibinin renginde
+    city: [
+      '...k.......k...',
+      '..kok.....kok..',
+      '.koook...koook.',
+      'koooook.koooook',
+      'kwwwwwk.kwwwwwk',
+      'kwgwgwk.kwgwgwk',
+      'kwwwwwk.kwwwwwk',
+      'kwwkwwk.kwwkwwk',
+      'kkkkkkk.kkkkkkk',
+    ],
+    // mazgallı taş burç, tepesinde sahip bayrağı
+    tower: [
+      '...koo.',
+      '...koo.',
+      '...k...',
+      'kk.k.kk',
+      'kSSSSSk',
+      'kssssSk',
+      'kssksSk',
+      'kssssSk',
+      'kssssSk',
+      'kSSSSSk',
+    ],
+    // kırmızı-beyaz deniz feneri, tepe bandı sahibinin renginde
+    port: [
+      '..kkk..',
+      '.kyyyk.',
+      '..kkk..',
+      '.koook.',
+      '.kWWWk.',
+      '.krrrk.',
+      '.kWWWk.',
+      '.krrrk.',
+      'kkkkkkk',
+      'kbbbbbk',
+    ],
+  },
+
+  BUILDING_COLORS: {
+    k: '#22262e', w: '#e6ddc4', g: '#8fc3e8', s: '#a7adb6', S: '#7d838d',
+    r: '#c8433c', W: '#f1f1ee', y: '#ffe066', b: '#8a6b45',
   },
 
   drawBuildings(ctx) {
     const W = CFG.MAP_W;
+    const pal = this.BUILDING_COLORS;
     for (const b of Game.buildings) {
       const spr = this.BUILDING_SPRITES[b.type];
       const rows = spr.length, cols = spr[0].length;
       const x = (b.idx % W) + 0.5, y = ((b.idx / W) | 0) + 0.5;
       const sx = x * this.zoom + this.ox;
       const sy = y * this.zoom + this.oy;
-      if (sx < -30 || sy < -30 || sx > this.canvas.width + 30 || sy > this.canvas.height + 30) continue;
-      const u = clamp(this.zoom * 0.5, 1.2, 5);
+      if (sx < -60 || sy < -60 || sx > this.canvas.width + 60 || sy > this.canvas.height + 60) continue;
+      const u = clamp(this.zoom * 0.55, 1.5, 5);
       const p = Game.players[b.owner];
       const ox0 = sx - cols * u / 2, oy0 = sy - rows * u / 2;
       for (let r = 0; r < rows; r++) {
         for (let c = 0; c < cols; c++) {
           const ch = spr[r][c];
           if (ch === '.') continue;
-          if (ch === 'o') ctx.fillStyle = p ? p.cssColor : '#888';
-          else if (ch === 'w') ctx.fillStyle = '#e0d8c4';
-          else if (ch === 's') ctx.fillStyle = '#9aa0a8';
-          else ctx.fillStyle = '#8a6b45';
+          ctx.fillStyle = ch === 'o' ? (p ? p.cssColor : '#888') : pal[ch];
           ctx.fillRect(ox0 + c * u, oy0 + r * u, u + 0.5, u + 0.5);
         }
       }
