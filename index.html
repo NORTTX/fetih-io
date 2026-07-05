@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fetih.io</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<canvas id="canvas"></canvas>
+
+<div id="hud" class="panel hidden">
+  <div class="hudrow"><span class="hudlabel">Güç</span><span id="hud-balance">0</span></div>
+  <div id="hud-balbar"><div id="hud-balfill"></div></div>
+  <div class="hudrow"><span class="hudlabel">Gelir</span><span id="hud-income">+0</span></div>
+  <div class="hudrow"><span class="hudlabel">Faiz</span><span id="hud-rate">%7.00</span></div>
+  <div class="hudrow"><span class="hudlabel">Arazi</span><span id="hud-land">0</span></div>
+  <div class="hudrow"><span class="hudlabel">Binalar</span><span id="hud-buildings">—</span></div>
+  <div id="hud-cyclebar" title="Gelir döngüsü"><div id="hud-cyclefill"></div></div>
+</div>
+
+<div id="attacklist" class="hidden"></div>
+
+<div id="lb" class="panel hidden"></div>
+
+<div id="piepanel" class="panel hidden">
+  <canvas id="pie" width="150" height="150"></canvas>
+</div>
+
+<div id="bottom" class="panel hidden">
+  <span id="pct-label">Saldırı: %25</span>
+  <input type="range" id="pct" min="1" max="100" value="25">
+  <div id="presets">
+    <button data-p="10">10</button>
+    <button data-p="25">25</button>
+    <button data-p="50">50</button>
+    <button data-p="100">100</button>
+  </div>
+</div>
+
+<div id="banner">Başlamak için bir kıtada yere tıkla</div>
+
+<div id="mapselect" class="panel">
+  <button data-m="world" class="active">🌍 Dünya</button>
+  <button data-m="europe">🏰 Avrupa</button>
+  <button data-m="med">⚓ Akdeniz</button>
+  <button data-m="arch">🏝️ Takımada</button>
+  <button data-m="duo">⚔️ İki Kıta</button>
+  <button data-m="random">🎲 Kıta</button>
+</div>
+
+<div id="settings" class="panel">
+  <div class="setrow">
+    <span class="setlabel">Katılımcı</span>
+    <input type="range" id="set-players" min="2" max="40" value="27">
+    <span id="set-players-val">27</span>
+  </div>
+  <div class="setrow">
+    <span class="setlabel">Takım</span>
+    <div id="set-teams">
+      <button data-t="0" class="active">FFA</button>
+      <button data-t="2">2</button>
+      <button data-t="3">3</button>
+      <button data-t="4">4</button>
+    </div>
+  </div>
+</div>
+
+<div id="overlay" class="hidden">
+  <div id="overlay-box">
+    <h1 id="overlay-title"></h1>
+    <p id="overlay-msg"></p>
+    <button id="btn-restart">Yeni Oyun</button>
+  </div>
+</div>
+
+<div id="toast" class="hidden"></div>
+
+<div id="actmenu" class="hidden">
+  <button id="act-land" title="Karadan saldır">⚔️</button>
+  <button id="act-sea" title="Gemi gönder">⛵</button>
+  <button id="act-peace" title="Barış teklif et">🤝</button>
+  <button id="act-sink" class="hidden" title="Gemiye saldır">💥</button>
+</div>
+
+<div id="buildmenu" class="hidden">
+  <button data-b="city">🏙️<small>Şehir<br><span id="cost-city"></span></small></button>
+  <button data-b="tower">🗼<small>Kule<br><span id="cost-tower"></span></small></button>
+  <button data-b="port">⚓<small>Liman<br><span id="cost-port"></span></small></button>
+</div>
+
+<div id="offers"></div>
+
+<script src="js/config.js"></script>
+<script src="js/worldmap.js"></script>
+<script src="js/regionmaps.js"></script>
+<script src="js/mapgen.js"></script>
+<script src="js/game.js"></script>
+<script src="js/render.js"></script>
+<script src="js/bots.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>

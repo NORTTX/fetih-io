@@ -1,0 +1,189 @@
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html, body { width: 100%; height: 100%; overflow: hidden; background: #0b1018; font-family: "Segoe UI", sans-serif; }
+
+#canvas { position: absolute; inset: 0; display: block; cursor: crosshair; }
+
+.panel {
+  position: absolute;
+  background: rgba(12, 18, 28, 0.82);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  color: #e8edf2;
+  padding: 10px 14px;
+  user-select: none;
+}
+
+.hidden { display: none !important; }
+
+#hud { top: 12px; left: 12px; min-width: 190px; font-size: 14px; }
+.hudrow { display: flex; justify-content: space-between; gap: 16px; padding: 2px 0; }
+.hudlabel { color: #93a3b5; }
+#hud-balance { font-weight: 700; font-size: 16px; }
+#hud-balance.redline { color: #ff6b5e; }
+#hud-balbar { height: 5px; background: #223142; border-radius: 3px; margin: 4px 0 6px; overflow: hidden; }
+#hud-balfill { height: 100%; width: 0%; background: #6fd06f; border-radius: 3px; transition: width .3s; }
+#hud-balfill.redline { background: #ff6b5e; }
+
+#hud-cyclebar { height: 4px; background: #223142; border-radius: 2px; margin-top: 7px; overflow: hidden; }
+#hud-cyclefill { height: 100%; width: 0%; background: #5aa7e0; border-radius: 2px; }
+#attacklist {
+  position: absolute; bottom: 88px; left: 50%; transform: translateX(-50%);
+  display: flex; flex-direction: column; gap: 3px;
+  background: rgba(12, 18, 28, 0.82);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px; padding: 6px 10px;
+  min-width: 230px; max-height: 180px; overflow-y: auto;
+}
+.atkrow {
+  display: flex; align-items: center; gap: 10px;
+  font-size: 13px; color: #d7e2ec;
+}
+.atkrow span:first-child { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.atkrow .atktroops { font-weight: 700; color: #fff; }
+.atkx {
+  background: rgba(200, 60, 50, 0.25); color: #ff9b90;
+  border: 1px solid rgba(255, 120, 110, 0.4); border-radius: 4px;
+  width: 22px; height: 22px; cursor: pointer; font-size: 12px; line-height: 1;
+  flex: none;
+}
+.atkx:hover { background: rgba(200, 60, 50, 0.55); color: #fff; }
+
+#lb { top: 12px; right: 12px; min-width: 200px; font-size: 13px; }
+#lb h3 { font-size: 12px; color: #93a3b5; margin-bottom: 6px; letter-spacing: 1px; }
+.lbrow { display: flex; align-items: center; gap: 8px; padding: 2px 0; }
+.lbrow.me { font-weight: 700; }
+.lbdot { width: 10px; height: 10px; border-radius: 2px; flex: none; }
+.lbname { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lbpct { color: #93a3b5; }
+
+#piepanel {
+  top: 12px; right: 232px; padding: 8px;
+  display: flex; align-items: center; justify-content: center;
+}
+#pie { display: block; }
+
+#bottom {
+  bottom: 16px; left: 50%; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 14px; padding: 10px 18px;
+}
+#pct-label { min-width: 105px; font-size: 14px; font-weight: 600; }
+#pct { width: 220px; accent-color: #6fd06f; }
+#presets { display: flex; gap: 6px; }
+#presets button {
+  background: #223142; color: #e8edf2; border: 1px solid rgba(255,255,255,.15);
+  border-radius: 5px; padding: 4px 10px; cursor: pointer; font-size: 12px;
+}
+#presets button:hover { background: #2f4358; }
+
+#banner {
+  position: absolute; top: 20px; left: 50%; transform: translateX(-50%);
+  background: rgba(12, 18, 28, 0.85); color: #fff; padding: 10px 22px;
+  border-radius: 8px; font-size: 16px; border: 1px solid rgba(255,255,255,.15);
+  pointer-events: none;
+}
+
+#mapselect {
+  top: 70px; left: 50%; transform: translateX(-50%);
+  display: flex; gap: 8px; padding: 8px 10px;
+}
+
+#settings {
+  top: 128px; left: 50%; transform: translateX(-50%);
+  display: flex; flex-direction: column; gap: 8px; padding: 10px 14px;
+  font-size: 13px;
+}
+.setrow { display: flex; align-items: center; gap: 10px; }
+.setlabel { color: #93a3b5; min-width: 62px; }
+#set-players { width: 150px; accent-color: #6fd06f; }
+#set-players-val { min-width: 22px; font-weight: 700; }
+#set-teams { display: flex; gap: 5px; }
+#set-teams button {
+  background: #223142; color: #e8edf2; border: 1px solid rgba(255,255,255,.15);
+  border-radius: 5px; padding: 4px 10px; cursor: pointer; font-size: 12px;
+}
+#set-teams button:hover { background: #2f4358; }
+#set-teams button.active { background: #3d6b3d; border-color: #6fd06f; }
+.lbteam {
+  font-size: 10px; font-weight: 700; color: #ffd94d;
+  background: rgba(255,217,77,.12); border-radius: 3px; padding: 0 4px; flex: none;
+}
+#mapselect button {
+  background: #223142; color: #e8edf2; border: 1px solid rgba(255,255,255,.15);
+  border-radius: 6px; padding: 7px 14px; cursor: pointer; font-size: 14px;
+}
+#mapselect button:hover { background: #2f4358; }
+#mapselect button.active { background: #3d6b3d; border-color: #6fd06f; }
+
+#overlay {
+  position: absolute; inset: 0; background: rgba(5, 8, 12, 0.72);
+  display: flex; align-items: center; justify-content: center;
+}
+#overlay-box {
+  background: #131c29; border: 1px solid rgba(255,255,255,.15); border-radius: 12px;
+  padding: 36px 52px; text-align: center; color: #fff;
+}
+#overlay-box h1 { font-size: 34px; margin-bottom: 10px; }
+#overlay-box p { color: #a9b8c8; margin-bottom: 22px; }
+#btn-restart {
+  background: #6fd06f; color: #08260f; font-weight: 700; font-size: 16px;
+  border: none; border-radius: 8px; padding: 12px 30px; cursor: pointer;
+}
+#btn-restart:hover { filter: brightness(1.1); }
+
+#actmenu {
+  position: absolute; display: flex; gap: 6px;
+  background: rgba(12, 18, 28, 0.92);
+  border: 1px solid rgba(255,255,255,.2);
+  border-radius: 10px; padding: 6px;
+  z-index: 20;
+}
+#actmenu button {
+  width: 44px; height: 44px; font-size: 22px;
+  background: #223142; border: 1px solid rgba(255,255,255,.15);
+  border-radius: 8px; cursor: pointer;
+}
+#actmenu button:hover { background: #2f4358; }
+#actmenu button.disabled { opacity: 0.3; pointer-events: none; }
+
+#buildmenu {
+  position: absolute; display: flex; gap: 6px;
+  background: rgba(12, 18, 28, 0.92);
+  border: 1px solid rgba(255,255,255,.2);
+  border-radius: 10px; padding: 6px;
+  z-index: 20;
+}
+#buildmenu button {
+  width: 74px; padding: 6px 4px; font-size: 20px;
+  background: #223142; border: 1px solid rgba(255,255,255,.15);
+  border-radius: 8px; cursor: pointer; color: #e8edf2;
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+}
+#buildmenu button small { font-size: 10px; line-height: 1.3; color: #b8c4d0; }
+#buildmenu button:hover { background: #2f4358; }
+#buildmenu button.disabled { opacity: 0.35; pointer-events: none; }
+
+#offers {
+  position: absolute; top: 60px; left: 50%; transform: translateX(-50%);
+  display: flex; flex-direction: column; gap: 6px; z-index: 15;
+}
+.offer {
+  display: flex; align-items: center; gap: 8px;
+  background: rgba(12, 18, 28, 0.92); color: #e8edf2;
+  border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 8px;
+  padding: 8px 12px; font-size: 14px;
+}
+.offer button {
+  width: 30px; height: 30px; border-radius: 6px; cursor: pointer;
+  border: 1px solid rgba(255,255,255,.2); font-size: 14px;
+}
+.offer .ok { background: #2f5c33; color: #9fe8a4; }
+.offer .ok:hover { background: #3d7a43; }
+.offer .no { background: #5c2f2f; color: #ff9b90; }
+.offer .no:hover { background: #7a3d3d; }
+
+#toast {
+  position: absolute; bottom: 90px; left: 50%; transform: translateX(-50%);
+  background: rgba(200, 60, 50, 0.9); color: #fff; padding: 8px 18px;
+  border-radius: 6px; font-size: 14px; pointer-events: none;
+}
