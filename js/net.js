@@ -1,115 +1,122 @@
-// Çevrimiçi oda katmanı: PeerJS (WebRTC) üzerinden tarayıcıdan tarayıcıya.
-// Model: oda kuran (host) komut sıralayıcıdır — istemcilerin komutlarını toplar,
-// tick numarasıyla damgalayıp herkese yayınlar. Simülasyon deterministik olduğu
-// için her istemci aynı komutları aynı tickte işleyerek özdeş dünyayı üretir.
-// STUN adres bulur; çoğu ev/mobil ağ çifti STUN delik açmayla bağlanabilir.
-// Not: iki taraf da katı NAT (CGNAT) arkasındaysa TURN aktarma sunucusu gerekir;
-// hesapsız ücretsiz TURN kalmadı (openrelay vb. kapandı). Gerekirse metered.ca
-// ücretsiz hesabıyla buraya TURN girdisi eklenebilir.
-const ICE_CONFIG = {
-  iceServers: [
-    { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:stun.cloudflare.com:3478' },
-  ],
-};
+// Çevrimiçi oda katmanı: Deno Deploy'daki aktarma sunucusuna WebSocket ile bağlanır.
+// Sunucu yalnızca mesaj taşır (oyun mantığı yok). Model: oda kuran (host) komut
+// sıralayıcıdır — istemcilerin komutlarını toplar, tick numarasıyla damgalayıp
+// herkese yayınlar. Simülasyon deterministik olduğu için her istemci aynı
+// komutları aynı tickte işleyerek özdeş dünyayı üretir.
+const RELAY_URL =
+  location.hostname === 'localhost' || location.hostname === '127.0.0.1'
+    ? 'ws://' + location.hostname + ':8000'
+    : 'wss://fetih-io.deno.dev';
 
 const Net = {
   active: false,
   isHost: false,
-  peer: null,
-  conns: [],          // host: tüm bağlantılar; istemci: [hostConn]
+  ws: null,
+  conns: [],          // host: sahte bağlantılar (cid üzerinden sunucu yönlendirir)
   roster: [],         // [{name}] — id = sıra + 1
   mySlot: 0,          // roster indeksim (id = mySlot + 1)
   pendingCmds: [],    // host: bir sonraki tickte yürütülecekler
   batchQueue: new Map(), // istemci: tick -> cmds
   onEvent: null,      // main.js bağlar: (type, data) => {}
+  lobbyOpen: true,
 
   myId() { return this.mySlot + 1; },
 
-  makeCode() {
-    const chars = 'ABCDEFGHJKLMNPRSTUVYZ23456789';
-    let c = '';
-    for (let i = 0; i < 4; i++) c += chars[(Math.random() * chars.length) | 0];
-    return c;
-  },
-
-  // Sinyal sunucusuyla bağ koparsa (uyku, ağ değişimi) yeniden bağlan;
-  // kurulmuş WebRTC bağlantıları bundan etkilenmez.
-  keepAlive(peer) {
-    peer.on('disconnected', () => {
-      if (!peer.destroyed) { try { peer.reconnect(); } catch (e) {} }
-    });
-  },
-
-  host(name, cb, attempt) {
-    attempt = attempt || 0;
-    const code = this.makeCode();
-    const peer = new Peer('fetih-io-oda-' + code, { config: ICE_CONFIG });
+  // Sunucuya bağlan; onReady(ws) ya da onFail(err) bir kez çağrılır.
+  open(onReady, onFail) {
     let settled = false;
-    this.peer = peer;
-    peer.on('open', () => {
-      if (settled) return;
-      settled = true;
-      this.keepAlive(peer);
-      this.active = true; this.isHost = true; this.mySlot = 0;
-      this.roster = [{ name }];
-      cb(null, code);
-    });
-    peer.on('error', e => {
-      const type = e.type || String(e);
-      if (settled) return;
-      settled = true;
-      // kod başka odada kullanılıyorsa yeni kodla tekrar dene
-      if (type === 'unavailable-id' && attempt < 3) {
-        peer.destroy();
-        this.host(name, cb, attempt + 1);
-        return;
-      }
-      peer.destroy();
-      cb(type);
-    });
-    peer.on('connection', conn => {
-      conn.on('open', () => {
-        conn.on('data', d => this.hostOnData(conn, d));
-        conn.on('close', () => this.emit('peerLeft', { slot: conn._slot }));
-      });
-      this.conns.push(conn);
-    });
+    let ws;
+    try { ws = new WebSocket(RELAY_URL); }
+    catch (e) { onFail('network'); return; }
+    this.ws = ws;
+    ws.onopen = () => { if (!settled) { settled = true; onReady(ws); } };
+    ws.onerror = () => { if (!settled) { settled = true; onFail('network'); } };
+    ws.onclose = () => {
+      if (!settled) { settled = true; onFail('network'); return; }
+      // oyun sırasında kopuş: herkes için oda ölmüştür
+      if (this.active) { this.active = false; this.emit('hostLost', {}); }
+    };
+    setTimeout(() => {
+      if (!settled) { settled = true; try { ws.close(); } catch (e) {} onFail('timeout'); }
+    }, 10000);
+    // Sunucu boşta kalan bağlantıyı kapatmasın
+    const ping = setInterval(() => {
+      if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ t: 'ping' }));
+      else clearInterval(ping);
+    }, 25000);
+  },
+
+  send(obj) {
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(obj));
+  },
+
+  toHost(obj) { this.send({ t: 'msg', data: obj }); },
+
+  host(name, cb) {
+    let done = false;
+    this.open(ws => {
+      ws.onmessage = e => {
+        const m = JSON.parse(e.data);
+        if (m.t === 'created') {
+          if (done) return;
+          done = true;
+          this.active = true; this.isHost = true; this.mySlot = 0;
+          this.roster = [{ name }];
+          cb(null, m.code);
+        } else if (m.t === 'peer-open') {
+          this.conns.push(this.makeConn(m.cid));
+        } else if (m.t === 'msg') {
+          const conn = this.conns.find(c => c.cid === m.from);
+          if (conn) this.hostOnData(conn, m.data);
+        } else if (m.t === 'peer-close') {
+          const conn = this.conns.find(c => c.cid === m.cid);
+          if (conn) { conn.open = false; this.emit('peerLeft', { slot: conn._slot }); }
+        }
+      };
+      this.send({ t: 'create' });
+      setTimeout(() => { if (!done) { done = true; cb('timeout'); } }, 8000);
+    }, err => { if (!done) { done = true; cb(err); } });
+  },
+
+  // host tarafında her misafir için sahte bağlantı nesnesi
+  makeConn(cid) {
+    const self = this;
+    return {
+      cid,
+      open: true,
+      _slot: undefined,
+      send(obj) { self.send({ t: 'msg', to: cid, data: obj }); },
+      close() { self.send({ t: 'kick', cid }); },
+    };
   },
 
   join(code, name, cb) {
-    const peer = new Peer({ config: ICE_CONFIG });
-    let settled = false;
-    const fail = err => {
-      if (settled) return;
-      settled = true;
-      peer.destroy();
-      cb(err);
-    };
-    this.peer = peer;
-    peer.on('open', () => {
-      const conn = peer.connect('fetih-io-oda-' + code.toUpperCase(), { reliable: true });
-      conn.on('open', () => {
-        if (settled) return;
-        settled = true;
-        this.keepAlive(peer);
-        this.active = true; this.isHost = false;
-        this.conns = [conn];
-        conn.on('data', d => this.clientOnData(d));
-        conn.on('close', () => this.emit('hostLost', {}));
-        conn.send({ t: 'hello', name });
-        cb(null);
-      });
-      conn.on('error', e => fail(e.type || String(e)));
-      // TURN üzerinden aktarma gecikebilir — bol süre tanı
-      setTimeout(() => fail('timeout'), 20000);
-    });
-    peer.on('error', e => fail(e.type || String(e)));
+    let done = false;
+    this.open(ws => {
+      ws.onmessage = e => {
+        const m = JSON.parse(e.data);
+        if (m.t === 'joined') {
+          if (done) return;
+          done = true;
+          this.active = true; this.isHost = false;
+          this.toHost({ t: 'hello', name });
+          cb(null);
+        } else if (m.t === 'no-room') {
+          if (!done) { done = true; cb('no-room'); }
+          try { ws.close(); } catch (e) {}
+        } else if (m.t === 'msg') {
+          this.clientOnData(m.data);
+        } else if (m.t === 'host-close') {
+          // onclose 'hostLost' üretir
+          try { ws.close(); } catch (e) {}
+        }
+      };
+      this.send({ t: 'join', code: code.toUpperCase() });
+      setTimeout(() => { if (!done) { done = true; cb('timeout'); } }, 8000);
+    }, err => { if (!done) { done = true; cb(err); } });
   },
 
   // ---- Host tarafı ----
-
-  lobbyOpen: true,
 
   hostOnData(conn, d) {
     if (d.t === 'hello') {
@@ -131,8 +138,9 @@ const Net = {
     }
   },
 
+  // tek mesaj: sunucu tüm misafirlere dağıtır
   broadcast(obj) {
-    for (const c of this.conns) { if (c.open) c.send(obj); }
+    this.send({ t: 'msg', to: 'all', data: obj });
   },
 
   // host kendi lobi komutunu da aynı yoldan dağıtır
@@ -163,13 +171,13 @@ const Net = {
   sendCmd(cmd) {
     if (!this.active) return;
     if (this.isHost) this.pendingCmds.push({ pid: this.myId(), cmd });
-    else if (this.conns[0] && this.conns[0].open) this.conns[0].send({ t: 'cmd', cmd });
+    else this.toHost({ t: 'cmd', cmd });
   },
 
   sendLobbyCmd(cmd) {
     if (!this.active) return;
     if (this.isHost) this.hostLobbyCmd(cmd);
-    else if (this.conns[0] && this.conns[0].open) this.conns[0].send({ t: 'lobbycmd', cmd });
+    else this.toHost({ t: 'lobbycmd', cmd });
   },
 
   emit(type, data) {

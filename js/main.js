@@ -140,14 +140,12 @@
 
   // ---- Çevrimiçi oda ----
 
-  function netAvailable() { return typeof Peer !== 'undefined'; }
+  function netAvailable() { return typeof WebSocket !== 'undefined'; }
 
   const NET_ERRORS = {
-    'peer-unavailable': 'Oda bulunamadı — kod yanlış ya da oda kapanmış',
-    'timeout': 'Bağlantı kurulamadı — oda kurucusu çevrimdışı olabilir, tekrar dene',
+    'no-room': 'Oda bulunamadı — kod yanlış ya da oda kapanmış',
+    'timeout': 'Sunucu yanıt vermedi — tekrar dene',
     'network': 'Sunucuya ulaşılamadı — internetini kontrol et',
-    'browser-incompatible': 'Tarayıcın WebRTC desteklemiyor',
-    'unavailable-id': 'Oda kodu alınamadı — tekrar dene',
   };
   function netErrMsg(err) { return NET_ERRORS[err] || ('Bağlantı hatası: ' + err); }
 
@@ -285,7 +283,7 @@
       if (p) toast('👋 ' + p.name + ' ayrıldı');
     } else if (type === 'hostLost') {
       if (state === 'play' || state === 'lobby') {
-        endGame(false, 'Oda kurucusunun bağlantısı koptu.');
+        endGame(false, Net.isHost ? 'Sunucu bağlantısı koptu.' : 'Oda kurucusunun bağlantısı koptu.');
       }
     } else if (type === 'full') {
       showJoinFail('Oyun çoktan başladı ya da oda dolu. Arkadaşından yeni bir oda kurup taze link atmasını iste.');
