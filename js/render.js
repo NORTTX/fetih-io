@@ -20,17 +20,26 @@ const Render = {
     this.resetCamera();
   },
 
+  // Ekran koordinatları hep CSS pikseli; canvas arka planda dpr kat daha
+  // yüksek çözünürlükte tutulur (telefonlarda netlik için).
+  dpr: 1, cssW: 0, cssH: 0,
+
   resize() {
-    this.canvas.width = window.innerWidth;
-    this.canvas.height = window.innerHeight;
+    this.dpr = Math.min(window.devicePixelRatio || 1, 3);
+    this.cssW = window.innerWidth;
+    this.cssH = window.innerHeight;
+    this.canvas.width = Math.round(this.cssW * this.dpr);
+    this.canvas.height = Math.round(this.cssH * this.dpr);
+    this.canvas.style.width = this.cssW + 'px';
+    this.canvas.style.height = this.cssH + 'px';
   },
 
   resetCamera() {
-    const fit = Math.min(this.canvas.width / CFG.MAP_W, this.canvas.height / CFG.MAP_H);
+    const fit = Math.min(this.cssW / CFG.MAP_W, this.cssH / CFG.MAP_H);
     this.fitZoom = fit;
     this.zoom = fit;
-    this.ox = (this.canvas.width - CFG.MAP_W * fit) / 2;
-    this.oy = (this.canvas.height - CFG.MAP_H * fit) / 2;
+    this.ox = (this.cssW - CFG.MAP_W * fit) / 2;
+    this.oy = (this.cssH - CFG.MAP_H * fit) / 2;
   },
 
   colorAt(i) {
@@ -54,6 +63,13 @@ const Render = {
     return y * CFG.MAP_W + x;
   },
 
+  // Kamerayı (x,y) hücresine ortala ve verilen yakınlığa getir
+  focusOn(x, y, z) {
+    this.zoom = clamp(z, this.fitZoom * 0.7, 16);
+    this.ox = this.cssW / 2 - x * this.zoom;
+    this.oy = this.cssH / 2 - y * this.zoom;
+  },
+
   zoomAt(sx, sy, factor) {
     const nz = clamp(this.zoom * factor, this.fitZoom * 0.7, 16);
     const wx = (sx - this.ox) / this.zoom;
@@ -65,14 +81,14 @@ const Render = {
 
   draw() {
     this.flushDirty();
-    const ctx = this.ctx;
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    const ctx = this.ctx, d = this.dpr;
+    ctx.setTransform(d, 0, 0, d, 0, 0);
     ctx.fillStyle = '#0b1018';
-    ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+    ctx.fillRect(0, 0, this.cssW, this.cssH);
     ctx.imageSmoothingEnabled = false;
-    ctx.setTransform(this.zoom, 0, 0, this.zoom, this.ox, this.oy);
+    ctx.setTransform(this.zoom * d, 0, 0, this.zoom * d, this.ox * d, this.oy * d);
     ctx.drawImage(this.off, 0, 0);
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.setTransform(d, 0, 0, d, 0, 0);
     this.drawBuildings(ctx);
     this.drawBoats(ctx);
     this.drawLabels(ctx);
@@ -136,7 +152,7 @@ const Render = {
       const x = (b.idx % W) + 0.5, y = ((b.idx / W) | 0) + 0.5;
       const sx = x * this.zoom + this.ox;
       const sy = y * this.zoom + this.oy;
-      if (sx < -60 || sy < -60 || sx > this.canvas.width + 60 || sy > this.canvas.height + 60) continue;
+      if (sx < -60 || sy < -60 || sx > this.cssW + 60 || sy > this.cssH + 60) continue;
       const u = clamp(this.zoom * 0.55, 1.5, 5);
       const p = Game.players[b.owner];
       const ox0 = sx - cols * u / 2, oy0 = sy - rows * u / 2;

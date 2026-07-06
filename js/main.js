@@ -296,7 +296,7 @@
     if (!p || p.pixels > 0) return;
     Game.execCommand(pid, { type: 'spawn', x: cmd.x, y: cmd.y });
     humanSpots.push([cmd.x, cmd.y]);
-    if (pid === Game.humanId) mySpawned = true;
+    if (pid === Game.humanId) { mySpawned = true; focusSpawn(cmd.x, cmd.y); }
     updateLobbyPlayers();
   }
 
@@ -355,9 +355,16 @@
 
   // ---- Solo başlangıç ----
 
+  // Telefonda oyuncu doğduğu yeri görsün diye kamera oraya yakınlaşır
+  function isSmallScreen() { return Math.min(window.innerWidth, window.innerHeight) < 700; }
+  function focusSpawn(cx, cy) {
+    if (isSmallScreen()) Render.focusOn(cx, cy, Math.max(Render.fitZoom * 5, 2.2));
+  }
+
   function startGame(cx, cy) {
     if (settings.teams > 0) human.team = 1;
     Game.spawn(human, cx, cy);
+    focusSpawn(cx, cy);
     spawnBots([[cx, cy]], clamp(settings.players - 1, 1, 60), 1);
     state = 'play';
     $('banner').classList.add('hidden');
@@ -792,56 +799,123 @@
 
   // ---- Fare ----
 
+  // Fare ve dokunmatik aynı üç aşamayı kullanır: bas / sürükle / bırak
   let mouseDown = false, panning = false, aiming = false, aimStartCell = -1;
   let lastMX = 0, lastMY = 0, downX = 0, downY = 0;
 
-  canvas.addEventListener('mousedown', e => {
+  function pressAt(sx, sy, canAim) {
     mouseDown = true; panning = false; aiming = false;
-    downX = lastMX = e.clientX; downY = lastMY = e.clientY;
-    if (e.button === 0 && state === 'play') {
-      const i = Render.screenToCell(e.clientX, e.clientY);
+    downX = lastMX = sx; downY = lastMY = sy;
+    if (canAim && state === 'play') {
+      const i = Render.screenToCell(sx, sy);
       if (i >= 0 && Game.owner[i] === Game.humanId) {
         aiming = true; aimStartCell = i; hideMenu();
       }
     }
-  });
+  }
 
-  canvas.addEventListener('contextmenu', e => e.preventDefault());
-
-  window.addEventListener('mousemove', e => {
+  function dragTo(sx, sy) {
     if (!mouseDown) return;
-    const dx = e.clientX - lastMX, dy = e.clientY - lastMY;
-    const moved = Math.hypot(e.clientX - downX, e.clientY - downY) > 6;
+    const dx = sx - lastMX, dy = sy - lastMY;
+    const moved = Math.hypot(sx - downX, sy - downY) > 6;
     if (aiming) {
-      Render.aim = moved ? { from: aimStartCell, toX: e.clientX, toY: e.clientY } : null;
+      Render.aim = moved ? { from: aimStartCell, toX: sx, toY: sy } : null;
     } else {
       if (!panning && moved) { panning = true; hideMenu(); }
       if (panning) { Render.ox += dx; Render.oy += dy; }
     }
-    lastMX = e.clientX; lastMY = e.clientY;
-  });
+    lastMX = sx; lastMY = sy;
+  }
 
-  window.addEventListener('mouseup', e => {
+  function releaseAt(sx, sy, canClick) {
     if (!mouseDown) return;
     mouseDown = false;
     if (aiming) {
       aiming = false;
       const hadArrow = Render.aim !== null;
       Render.aim = null;
-      if (hadArrow) handleAimRelease(e.clientX, e.clientY);
-      else handleClick(e.clientX, e.clientY);
+      if (hadArrow) handleAimRelease(sx, sy);
+      else if (canClick) handleClick(sx, sy);
       return;
     }
     if (panning) return;
-    if (e.button !== 0) return;
-    handleClick(e.clientX, e.clientY);
-  });
+    if (canClick) handleClick(sx, sy);
+  }
+
+  canvas.addEventListener('mousedown', e => pressAt(e.clientX, e.clientY, e.button === 0));
+  canvas.addEventListener('contextmenu', e => e.preventDefault());
+  window.addEventListener('mousemove', e => dragTo(e.clientX, e.clientY));
+  window.addEventListener('mouseup', e => releaseAt(e.clientX, e.clientY, e.button === 0));
 
   canvas.addEventListener('wheel', e => {
     e.preventDefault();
     hideMenu();
     Render.zoomAt(e.clientX, e.clientY, Math.pow(1.1, -e.deltaY / 100));
   }, { passive: false });
+
+  // ---- Dokunmatik: tek parmak = tıkla/sürükle, iki parmak = kaydır + yakınlaştır ----
+
+  let touchMode = null; // null | 'single' | 'pinch'
+  let pinchPrev = null; // [{x,y},{x,y}]
+
+  const tp = t => ({ x: t.clientX, y: t.clientY });
+
+  canvas.addEventListener('touchstart', e => {
+    e.preventDefault();
+    if (e.touches.length === 1) {
+      touchMode = 'single';
+      const p = tp(e.touches[0]);
+      pressAt(p.x, p.y, true);
+    } else if (e.touches.length >= 2) {
+      // ikinci parmak indi: nişan/tıklama iptal, kamera moduna geç
+      touchMode = 'pinch';
+      mouseDown = false; aiming = false; Render.aim = null;
+      pinchPrev = [tp(e.touches[0]), tp(e.touches[1])];
+      hideMenu();
+    }
+  }, { passive: false });
+
+  canvas.addEventListener('touchmove', e => {
+    e.preventDefault();
+    if (touchMode === 'single' && e.touches.length === 1) {
+      const p = tp(e.touches[0]);
+      dragTo(p.x, p.y);
+    } else if (touchMode === 'pinch' && e.touches.length >= 2) {
+      const a = tp(e.touches[0]), b = tp(e.touches[1]);
+      const cx = (a.x + b.x) / 2, cy = (a.y + b.y) / 2;
+      const pcx = (pinchPrev[0].x + pinchPrev[1].x) / 2;
+      const pcy = (pinchPrev[0].y + pinchPrev[1].y) / 2;
+      Render.ox += cx - pcx;
+      Render.oy += cy - pcy;
+      const d = Math.hypot(a.x - b.x, a.y - b.y);
+      const pd = Math.hypot(pinchPrev[0].x - pinchPrev[1].x, pinchPrev[0].y - pinchPrev[1].y);
+      if (pd > 0 && d > 0) Render.zoomAt(cx, cy, d / pd);
+      pinchPrev = [a, b];
+    }
+  }, { passive: false });
+
+  canvas.addEventListener('touchend', e => {
+    e.preventDefault();
+    if (touchMode === 'single' && e.touches.length === 0) {
+      touchMode = null;
+      const p = tp(e.changedTouches[0]);
+      releaseAt(p.x, p.y, true);
+    } else if (touchMode === 'pinch') {
+      if (e.touches.length === 1) {
+        // tek parmak kaldı: yalnızca kaydırmaya devam (yanlışlıkla saldırı olmasın)
+        touchMode = 'single';
+        const p = tp(e.touches[0]);
+        pressAt(p.x, p.y, false);
+        panning = true;
+      } else if (e.touches.length === 0) {
+        touchMode = null;
+      }
+    }
+  }, { passive: false });
+
+  canvas.addEventListener('touchcancel', () => {
+    touchMode = null; mouseDown = false; aiming = false; panning = false; Render.aim = null;
+  });
 
   function handleAimRelease(sx, sy) {
     let i = Render.screenToCell(sx, sy);
