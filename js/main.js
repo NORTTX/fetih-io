@@ -142,6 +142,15 @@
 
   function netAvailable() { return typeof Peer !== 'undefined'; }
 
+  const NET_ERRORS = {
+    'peer-unavailable': 'Oda bulunamadı — kod yanlış ya da oda kapanmış',
+    'timeout': 'Bağlantı kurulamadı — oda kurucusu çevrimdışı olabilir, tekrar dene',
+    'network': 'Sunucuya ulaşılamadı — internetini kontrol et',
+    'browser-incompatible': 'Tarayıcın WebRTC desteklemiyor',
+    'unavailable-id': 'Oda kodu alınamadı — tekrar dene',
+  };
+  function netErrMsg(err) { return NET_ERRORS[err] || ('Bağlantı hatası: ' + err); }
+
   $('btn-host').addEventListener('click', () => {
     if (state !== 'pick') return;
     if (!netAvailable()) { toast('Çevrimiçi mod yüklenemedi (internet?)'); return; }
@@ -149,7 +158,7 @@
     Net.onEvent = onNetEvent;
     Net.host(myName(), (err, code) => {
       $('btn-host').disabled = false;
-      if (err) { toast('Oda kurulamadı: ' + err); return; }
+      if (err) { toast('Oda kurulamadı: ' + netErrMsg(err)); return; }
       online = true;
       const seed = (Math.random() * 1e9) | 0;
       enterLobbyAsHost(code, seed);
@@ -165,7 +174,7 @@
     Net.onEvent = onNetEvent;
     Net.join(code, myName(), err => {
       $('btn-join').disabled = false;
-      if (err) { toast('Katılamadın: ' + err); return; }
+      if (err) { toast('Katılamadın: ' + netErrMsg(err)); return; }
       online = true;
       toast('Odaya bağlanıldı, harita bekleniyor...');
     });
@@ -227,6 +236,9 @@
       while (Game.players.length - 1 < Net.roster.length) {
         addHuman(Game.players.length - 1, Net.roster[Game.players.length - 1].name);
       }
+      // yeni katılan doğum yeri seçebilsin diye geri sayım 30 sn'ye kurulur
+      lobbyDeadline = Date.now() + 30000;
+      toast('🎮 ' + Net.roster[Net.roster.length - 1].name + ' odaya katıldı');
       updateLobbyPlayers();
       Net.broadcast(lobbyMsg());
     } else if (type === 'lobbyState') {

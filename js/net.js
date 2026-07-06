@@ -2,6 +2,19 @@
 // Model: oda kuran (host) komut sıralayıcıdır — istemcilerin komutlarını toplar,
 // tick numarasıyla damgalayıp herkese yayınlar. Simülasyon deterministik olduğu
 // için her istemci aynı komutları aynı tickte işleyerek özdeş dünyayı üretir.
+// STUN adres bulur; TURN farklı ağlardaki oyuncular doğrudan bağlanamayınca
+// (CGNAT / simetrik NAT — ev ve mobil internette çok yaygın) trafiği aktarır.
+// TURN olmadan davet linki yalnızca aynı ağdaki oyuncularda çalışır.
+const ICE_CONFIG = {
+  iceServers: [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun.cloudflare.com:3478' },
+    { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
+    { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
+    { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' },
+  ],
+};
+
 const Net = {
   active: false,
   isHost: false,
@@ -22,16 +35,42 @@ const Net = {
     return c;
   },
 
-  host(name, cb) {
+  // Sinyal sunucusuyla bağ koparsa (uyku, ağ değişimi) yeniden bağlan;
+  // kurulmuş WebRTC bağlantıları bundan etkilenmez.
+  keepAlive(peer) {
+    peer.on('disconnected', () => {
+      if (!peer.destroyed) { try { peer.reconnect(); } catch (e) {} }
+    });
+  },
+
+  host(name, cb, attempt) {
+    attempt = attempt || 0;
     const code = this.makeCode();
-    this.peer = new Peer('fetih-io-oda-' + code);
-    this.peer.on('open', () => {
+    const peer = new Peer('fetih-io-oda-' + code, { config: ICE_CONFIG });
+    let settled = false;
+    this.peer = peer;
+    peer.on('open', () => {
+      if (settled) return;
+      settled = true;
+      this.keepAlive(peer);
       this.active = true; this.isHost = true; this.mySlot = 0;
       this.roster = [{ name }];
       cb(null, code);
     });
-    this.peer.on('error', e => cb(e.type || String(e)));
-    this.peer.on('connection', conn => {
+    peer.on('error', e => {
+      const type = e.type || String(e);
+      if (settled) return;
+      settled = true;
+      // kod başka odada kullanılıyorsa yeni kodla tekrar dene
+      if (type === 'unavailable-id' && attempt < 3) {
+        peer.destroy();
+        this.host(name, cb, attempt + 1);
+        return;
+      }
+      peer.destroy();
+      cb(type);
+    });
+    peer.on('connection', conn => {
       conn.on('open', () => {
         conn.on('data', d => this.hostOnData(conn, d));
         conn.on('close', () => this.emit('peerLeft', { slot: conn._slot }));
@@ -41,22 +80,33 @@ const Net = {
   },
 
   join(code, name, cb) {
-    this.peer = new Peer();
-    this.peer.on('open', () => {
-      const conn = this.peer.connect('fetih-io-oda-' + code.toUpperCase(), { reliable: true });
-      let ok = false;
+    const peer = new Peer({ config: ICE_CONFIG });
+    let settled = false;
+    const fail = err => {
+      if (settled) return;
+      settled = true;
+      peer.destroy();
+      cb(err);
+    };
+    this.peer = peer;
+    peer.on('open', () => {
+      const conn = peer.connect('fetih-io-oda-' + code.toUpperCase(), { reliable: true });
       conn.on('open', () => {
+        if (settled) return;
+        settled = true;
+        this.keepAlive(peer);
         this.active = true; this.isHost = false;
         this.conns = [conn];
         conn.on('data', d => this.clientOnData(d));
         conn.on('close', () => this.emit('hostLost', {}));
         conn.send({ t: 'hello', name });
-        ok = true; cb(null);
+        cb(null);
       });
-      conn.on('error', e => { if (!ok) cb(String(e)); });
-      setTimeout(() => { if (!ok) cb('timeout'); }, 8000);
+      conn.on('error', e => fail(e.type || String(e)));
+      // TURN üzerinden aktarma gecikebilir — bol süre tanı
+      setTimeout(() => fail('timeout'), 20000);
     });
-    this.peer.on('error', e => cb(e.type || String(e)));
+    peer.on('error', e => fail(e.type || String(e)));
   },
 
   // ---- Host tarafı ----
