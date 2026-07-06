@@ -26,7 +26,7 @@
 
   // çevrimiçi durum
   let online = false;
-  let lobbyDeadline = 0;   // host: gerçek zaman; istemci: tahmini
+  let lobbyDeadline = 0;   // host: gerçek zaman; istemci: tahmini; 0 = misafir bekleniyor
   let humanSpots = [];     // lobide seçilen insan doğum noktaları [[x,y],...]
   let mySpawned = false;
   let gameStarted = false;
@@ -151,6 +151,16 @@
   };
   function netErrMsg(err) { return NET_ERRORS[err] || ('Bağlantı hatası: ' + err); }
 
+  // Davet linkinden gelen katılamayınca kaybolan bildirim yetmez — kalıcı ekran göster
+  function showJoinFail(msg) {
+    $('overlay-title').textContent = 'ODAYA GİRİLEMEDİ';
+    $('overlay-title').style.color = '#ff6b5e';
+    $('overlay-msg').textContent = msg;
+    $('overlay').classList.remove('hidden');
+  }
+
+  let autoJoin = false;
+
   $('btn-host').addEventListener('click', () => {
     if (state !== 'pick') return;
     if (!netAvailable()) { toast('Çevrimiçi mod yüklenemedi (internet?)'); return; }
@@ -174,7 +184,11 @@
     Net.onEvent = onNetEvent;
     Net.join(code, myName(), err => {
       $('btn-join').disabled = false;
-      if (err) { toast('Katılamadın: ' + netErrMsg(err)); return; }
+      if (err) {
+        if (autoJoin) showJoinFail(netErrMsg(err));
+        else toast('Katılamadın: ' + netErrMsg(err));
+        return;
+      }
       online = true;
       toast('Odaya bağlanıldı, harita bekleniyor...');
     });
@@ -188,13 +202,13 @@
     boot(mapType, seed);
     human = addHuman(0, Net.roster[0].name);
     state = 'lobby';
-    lobbyDeadline = Date.now() + 30000;
+    lobbyDeadline = 0; // ilk misafir katılana dek oda açık bekler
     showLobbyUI(code);
     // lobi durumunu periyodik yayınla
     hostState.timer = setInterval(() => {
       if (state !== 'lobby') { clearInterval(hostState.timer); return; }
       Net.broadcast(lobbyMsg());
-      if (Date.now() >= lobbyDeadline) hostStartGame();
+      if (lobbyDeadline && Date.now() >= lobbyDeadline) hostStartGame();
     }, 800);
   }
 
@@ -206,7 +220,7 @@
       mapType, settings,
       roster: Net.roster,
       spawns: hostState.spawns,
-      secondsLeft: Math.max(0, Math.ceil((lobbyDeadline - Date.now()) / 1000)),
+      secondsLeft: lobbyDeadline ? Math.max(0, Math.ceil((lobbyDeadline - Date.now()) / 1000)) : -1,
     };
   }
 
@@ -259,7 +273,7 @@
       for (const s of d.spawns) {
         applyLobbyCmd(s.pid, { type: 'spawn', x: s.x, y: s.y });
       }
-      lobbyDeadline = Date.now() + d.secondsLeft * 1000;
+      lobbyDeadline = d.secondsLeft >= 0 ? Date.now() + d.secondsLeft * 1000 : 0;
       updateLobbyPlayers();
     } else if (type === 'lobbyCmd') {
       applyLobbyCmd(d.pid, d.cmd);
@@ -274,7 +288,7 @@
         endGame(false, 'Oda kurucusunun bağlantısı koptu.');
       }
     } else if (type === 'full') {
-      toast('Oda dolu veya oyun çoktan başladı');
+      showJoinFail('Oyun çoktan başladı ya da oda dolu. Arkadaşından yeni bir oda kurup taze link atmasını iste.');
     }
   }
 
@@ -447,8 +461,9 @@
       lastTime = now;
       if (state === 'lobby' && now - hudTimer > 300) {
         hudTimer = now;
-        const s = Math.max(0, Math.ceil((lobbyDeadline - Date.now()) / 1000));
-        $('lobby-count').textContent = s;
+        $('lobby-status').innerHTML = lobbyDeadline
+          ? 'Başlamaya: <b>' + Math.max(0, Math.ceil((lobbyDeadline - Date.now()) / 1000)) + '</b> sn'
+          : '⏳ Arkadaşın bekleniyor — linki gönder!';
       }
     }
     Render.draw();
@@ -946,8 +961,11 @@
   const roomParam = new URLSearchParams(location.search).get('room');
   boot('world');
   if (roomParam && netAvailable()) {
+    autoJoin = true;
     $('code-input').value = roomParam.toUpperCase();
     toast('Odaya bağlanılıyor: ' + roomParam.toUpperCase());
     setTimeout(() => $('btn-join').click(), 400);
+  } else if (roomParam) {
+    showJoinFail('Çevrimiçi mod yüklenemedi — sayfayı yenilemeyi dene.');
   }
 })();

@@ -2,16 +2,14 @@
 // Model: oda kuran (host) komut sıralayıcıdır — istemcilerin komutlarını toplar,
 // tick numarasıyla damgalayıp herkese yayınlar. Simülasyon deterministik olduğu
 // için her istemci aynı komutları aynı tickte işleyerek özdeş dünyayı üretir.
-// STUN adres bulur; TURN farklı ağlardaki oyuncular doğrudan bağlanamayınca
-// (CGNAT / simetrik NAT — ev ve mobil internette çok yaygın) trafiği aktarır.
-// TURN olmadan davet linki yalnızca aynı ağdaki oyuncularda çalışır.
+// STUN adres bulur; çoğu ev/mobil ağ çifti STUN delik açmayla bağlanabilir.
+// Not: iki taraf da katı NAT (CGNAT) arkasındaysa TURN aktarma sunucusu gerekir;
+// hesapsız ücretsiz TURN kalmadı (openrelay vb. kapandı). Gerekirse metered.ca
+// ücretsiz hesabıyla buraya TURN girdisi eklenebilir.
 const ICE_CONFIG = {
   iceServers: [
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun.cloudflare.com:3478' },
-    { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
-    { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
-    { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' },
   ],
 };
 
