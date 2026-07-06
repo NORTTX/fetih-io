@@ -6,7 +6,7 @@
 const RELAY_URL =
   location.hostname === 'localhost' || location.hostname === '127.0.0.1'
     ? 'ws://' + location.hostname + ':8000'
-    : 'wss://fetih-io.deno.dev';
+    : 'wss://fetih-io.norttx.deno.net';
 
 const Net = {
   active: false,
