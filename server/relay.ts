@@ -2,6 +2,9 @@
 // Oyun mantığı içermez: odaları tutar ve mesajları taşır. Host komut
 // sıralayıcıdır; sunucu hostun paketlerini misafirlere, misafirlerinkini
 // hosta iletir. Böylece NAT/TURN derdi olmaz — herkes sunucuya bağlanır.
+// WebSocket olmayan istekler için oyunun statik dosyalarını da sunar;
+// yani oyun deno.net adresinden de oynanabilir.
+import { serveDir } from 'jsr:@std/http@1/file-server';
 
 type Room = {
   code: string;
@@ -28,7 +31,10 @@ function send(ws: WebSocket, obj: unknown) {
 
 Deno.serve((req: Request) => {
   if (req.headers.get('upgrade')?.toLowerCase() !== 'websocket') {
-    return new Response('Fetih.io relay calisiyor. Oda sayisi: ' + rooms.size);
+    if (new URL(req.url).pathname === '/durum') {
+      return new Response('Fetih.io relay calisiyor. Oda sayisi: ' + rooms.size);
+    }
+    return serveDir(req, { fsRoot: '.', showIndex: true, quiet: true });
   }
   const { socket, response } = Deno.upgradeWebSocket(req);
 
